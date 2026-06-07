@@ -90,14 +90,15 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
     # Build command
     cmd = [YTDLP]
     for k, v in opts.items():
+        flag = f"--{k.replace('_', '-')}"
         if isinstance(v, bool):
             if v:
-                cmd.append(f"--{k}")
+                cmd.append(flag)
         elif isinstance(v, (str, int, float)):
-            cmd.extend([f"--{k}", str(v)])
+            cmd.extend([flag, str(v)])
         elif isinstance(v, list):
             for item in v:
-                cmd.extend([f"--{k}", json.dumps(item) if isinstance(item, dict) else str(item)])
+                cmd.extend([flag, json.dumps(item) if isinstance(item, dict) else str(item)])
         elif isinstance(v, dict):
             for dk, dv in v.items():
                 cmd.extend([f"--{dk}", str(dv)])
