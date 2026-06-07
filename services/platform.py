@@ -25,7 +25,7 @@ PATTERNS = {
 
 PLATFORM_META = {
     "youtube": PlatformInfo("YouTube", "🔴", supports_audio=True, supports_quality=True),
-    "instagram": PlatformInfo("Instagram", "📸", supports_audio=False, supports_quality=False, note="Stories require login cookies"),
+    "instagram": PlatformInfo("Instagram", "📸", supports_audio=False, supports_quality=False),
     "tiktok": PlatformInfo("TikTok", "🎵", supports_audio=True, supports_quality=False, note="No-watermark available"),
 }
 
