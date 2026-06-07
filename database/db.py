@@ -56,10 +56,25 @@ async def record_download(user_id: int, url: str, platform: str, title: str = No
             "INSERT INTO downloads (user_id, url, platform, title, file_size) VALUES (?, ?, ?, ?, ?)",
             (user_id, url, platform, title, file_size)
         )
-        await db.execute(
-            "UPDATE users SET downloads_today = downloads_today + 1 WHERE user_id = ?",
-            (user_id,)
-        )
+
+        # Check if user is over daily limit — use extra download instead
+        user = await db.execute_fetchall("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        if user:
+            u = dict(user[0])
+            daily_limit = u["daily_limit"] or config.DAILY_LIMIT
+            if daily_limit > 0 and u["downloads_today"] >= daily_limit and u["extra_downloads"] > 0:
+                # Use extra download
+                await db.execute(
+                    "UPDATE users SET extra_downloads = MAX(0, extra_downloads - 1) WHERE user_id = ?",
+                    (user_id,)
+                )
+            else:
+                # Normal daily counter
+                await db.execute(
+                    "UPDATE users SET downloads_today = downloads_today + 1 WHERE user_id = ?",
+                    (user_id,)
+                )
+
         # Update daily stats
         await db.execute(
             """INSERT INTO stats (date, total_downloads, by_platform)

@@ -2,7 +2,6 @@ from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.filters import CommandStart, Command
 from database.db import get_or_create_user
-from keyboards.inline import buy_keyboard
 
 router = Router()
 
@@ -56,15 +55,4 @@ async def cmd_stats(message: Message):
         f"🎁 Extra remaining: {extra}\n"
         f"📉 Remaining today: {remaining}",
         parse_mode="HTML",
-    )
-
-@router.message(Command("buy"))
-async def cmd_buy(message: Message):
-    await message.answer(
-        "⭐ <b>Extra Downloads</b>\n\n"
-        "Get 10 extra downloads for today!\n"
-        "Price: 50 Telegram Stars\n\n"
-        "Tap below to purchase:",
-        parse_mode="HTML",
-        reply_markup=buy_keyboard(),
     )

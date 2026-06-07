@@ -10,7 +10,7 @@ from aiogram.enums import ParseMode
 
 from config import config
 from database.models import init_db
-from handlers import start, download, admin
+from handlers import start, download, admin, stars
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,6 +34,7 @@ async def main():
     dp = Dispatcher()
 
     dp.include_routers(
+        stars.router,   # Stars payment handlers first
         start.router,
         download.router,
         admin.router,
@@ -42,7 +43,7 @@ async def main():
     dp.startup.register(on_startup)
 
     logger.info("Starting polling...")
-    await dp.start_polling(bot, allowed_updates=["message", "callback_query", "inline_query"])
+    await dp.start_polling(bot, allowed_updates=["message", "callback_query", "inline_query", "pre_checkout_query"])
 
 if __name__ == "__main__":
     asyncio.run(main())
