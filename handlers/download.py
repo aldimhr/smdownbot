@@ -277,15 +277,57 @@ async def process_quality_download(bot: Bot, user_id: int, quality: str, short_i
         await status_msg.edit_text(f"❌ Download failed:\n<code>{error_text}</code>", parse_mode="HTML")
         return
 
-    # Check file size
+    # Check file size — split if too large
     if result.file_size > config.MAX_FILE_SIZE:
-        cleanup_file(result.file_path)
         await status_msg.edit_text(
-            f"❌ File too large ({format_size(result.file_size)}).\n"
-            f"Telegram bot limit is 50MB.\n\n"
-            f"Try a lower quality: 480p or audio-only.",
+            f"📦 File too large ({format_size(result.file_size)}). Splitting into parts...",
             parse_mode="HTML",
         )
+        from services.downloader import split_video
+        try:
+            parts = await asyncio.get_event_loop().run_in_executor(
+                None, split_video, result.file_path
+            )
+        except Exception as e:
+            cleanup_file(result.file_path)
+            await status_msg.edit_text(
+                f"❌ Failed to split video: {str(e)[:100]}\n\nTry a lower quality: 480p or audio-only.",
+                parse_mode="HTML",
+            )
+            return
+
+        if len(parts) <= 1:
+            cleanup_file(result.file_path)
+            await status_msg.edit_text(
+                f"❌ File too large ({format_size(result.file_size)}).\n"
+                f"Telegram bot limit is 50MB.\n\n"
+                f"Try a lower quality: 480p or audio-only.",
+                parse_mode="HTML",
+            )
+            return
+
+        # Send each part
+        await status_msg.edit_text(f"📤 Uploading {len(parts)} parts...", parse_mode="HTML")
+        for i, part_path in enumerate(parts, 1):
+            try:
+                part_size = os.path.getsize(part_path)
+                caption = f"🎬 <b>{result.title}</b>\n📦 Part {i}/{len(parts)} — {format_size(part_size)}"
+                file = FSInputFile(part_path)
+                await bot.send_video(
+                    chat_id=chat_id,
+                    video=file,
+                    caption=caption,
+                    parse_mode="HTML",
+                    supports_streaming=True,
+                )
+                cleanup_file(part_path)
+            except Exception as e:
+                await bot.send_message(chat_id, f"❌ Part {i} upload failed: {str(e)[:50]}")
+                cleanup_file(part_path)
+
+        await record_download(user_id, url, platform, result.title, result.file_size)
+        await status_msg.delete()
+        cleanup_file(result.file_path)
         return
 
     # Send file

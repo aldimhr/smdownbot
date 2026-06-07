@@ -232,3 +232,44 @@ def cleanup_old_files(max_age_hours: int = 1):
                 os.remove(f)
             except OSError:
                 pass
+
+
+def split_video(file_path: str, max_size_mb: int = 48) -> list[str]:
+    """Split a video into parts that fit under max_size_mb.
+    Returns list of part file paths."""
+    import subprocess
+    
+    file_size = os.path.getsize(file_path)
+    max_bytes = max_size_mb * 1024 * 1024
+    
+    if file_size <= max_bytes:
+        return [file_path]
+    
+    # Get video duration
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+        capture_output=True, text=True
+    )
+    duration = float(result.stdout.strip())
+    
+    # Calculate number of parts needed
+    num_parts = int(file_size / max_bytes) + 1
+    segment_duration = duration / num_parts
+    
+    # Split using ffmpeg
+    base, ext = os.path.splitext(file_path)
+    pattern = f"{base}_part%d{ext}"
+    
+    subprocess.run([
+        "ffmpeg", "-i", file_path,
+        "-c", "copy",
+        "-f", "segment",
+        "-segment_time", str(segment_duration),
+        "-reset_timestamps", "1",
+        pattern
+    ], capture_output=True, check=True)
+    
+    # Collect part files
+    parts = sorted(glob.glob(f"{base}_part*{ext}"))
+    return parts if parts else [file_path]
