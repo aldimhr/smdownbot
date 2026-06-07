@@ -6,6 +6,13 @@ import glob
 from dataclasses import dataclass
 from typing import Optional
 from config import config
+import shutil
+import sys
+
+# Find yt-dlp: prefer venv copy, fallback to system
+YTDLP = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
+if not os.path.exists(YTDLP):
+    YTDLP = shutil.which("yt-dlp") or "yt-dlp"
 
 @dataclass
 class DownloadResult:
@@ -38,7 +45,7 @@ async def get_info(url: str, platform: str = None) -> Optional[dict]:
     opts = _base_opts(platform)
     opts.update({"skip_download": True, "extract_flat": False})
     proc = await asyncio.create_subprocess_exec(
-        "yt-dlp", "--dump-json", "--no-download", url,
+        YTDLP, "--dump-json", "--no-download", url,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         env={**os.environ, "PYTHONUNBUFFERED": "1"}
     )
@@ -77,7 +84,7 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
         opts["format"] = "best"
 
     # Build command
-    cmd = ["yt-dlp"]
+    cmd = [YTDLP]
     for k, v in opts.items():
         if isinstance(v, bool):
             if v:
