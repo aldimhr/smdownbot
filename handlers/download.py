@@ -170,7 +170,18 @@ async def handle_link(message: Message, bot: Bot):
 
     info = await get_info(url, platform)
     if not info:
-        await loading.edit_text("❌ Couldn't fetch this content. It might be private, expired, or temporarily unavailable.")
+        if platform == "instagram":
+            await loading.edit_text(
+                "🔒 <b>Can't access this content</b>\n\n"
+                "This might be because:\n"
+                "• The account is <b>private</b> (bot doesn't follow them)\n"
+                "• The story has <b>expired</b> (stories last 24h)\n"
+                "• The post was <b>deleted</b>\n\n"
+                "💡 If it's a private account, the bot needs to follow them first.",
+                parse_mode="HTML",
+            )
+        else:
+            await loading.edit_text("❌ Couldn't fetch this content. It might be private, expired, or temporarily unavailable.")
         return
 
     title = info.get("title", "Unknown")[:80]

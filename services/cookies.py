@@ -95,9 +95,8 @@ def _login_sync() -> bool:
             login_btn = page.locator('div[role="button"]:has-text("Log in")').first
             login_btn.click()
 
-            # Wait for navigation
-            page.wait_for_url("**/instagram.com/**", timeout=15000)
-            time.sleep(3)
+            # Wait for navigation (onetap or home page)
+            time.sleep(8)
 
             # Save cookies
             cookies = page.context.cookies()
