@@ -48,7 +48,6 @@ async def handle_username(message: Message, bot: Bot):
 
 async def handle_bulk_stories(message: Message, bot: Bot, url: str, user_id: int):
     """Handle bulk story download for instagram.com/stories/username/"""
-    # Extract username from URL
     import re
     match = re.search(r"stories/([\w.]+)", url)
     username = match.group(1) if match else "user"
@@ -66,7 +65,8 @@ async def handle_bulk_stories(message: Message, bot: Bot, url: str, user_id: int
     downloaded = 0
     failed = 0
 
-    for i, story in enumerate(stories, 1):
+    for story in stories:
+        i = story.index
         # Check daily limit
         ok, err = await can_download(user_id)
         if not ok:
@@ -81,30 +81,34 @@ async def handle_bulk_stories(message: Message, bot: Bot, url: str, user_id: int
         # Update progress
         progress_msg = await message.answer(f"📥 Downloading story {i}/{total}...")
 
-        # Download
-        from services.downloader import download as dl_func, cleanup_file
-        story_url = f"https://www.instagram.com/stories/{username}/{story.id}"
-        result = await dl_func(story_url, "instagram")
+        # Download using playlist index (not media ID — that causes duplicates)
+        from services.bulk_stories import download_story_by_index
+        from services.downloader import cleanup_file
+        result = await download_story_by_index(url, i)
 
-        if not result.success:
+        if not result["success"]:
             failed += 1
-            await progress_msg.edit_text(f"❌ Story {i}/{total} failed: {result.error[:50] if result.error else 'Unknown error'}")
+            err_msg = result["error"][:50] if result["error"] else "Unknown error"
+            await progress_msg.edit_text(f"❌ Story {i}/{total} failed: {err_msg}")
             continue
 
+        file_path = result["file_path"]
+        file_size = result["file_size"]
+
         # Check size
-        if result.file_size > config.MAX_FILE_SIZE:
-            cleanup_file(result.file_path)
+        if file_size > config.MAX_FILE_SIZE:
+            cleanup_file(file_path)
             failed += 1
-            await progress_msg.edit_text(f"❌ Story {i}/{total} too large ({result.file_size // (1024*1024)}MB)")
+            await progress_msg.edit_text(f"❌ Story {i}/{total} too large ({file_size // (1024*1024)}MB)")
             continue
 
         # Send
         try:
             caption = f"📖 Story {i}/{total}"
-            if result.title:
-                caption += f" — {result.title[:50]}"
+            if result["title"]:
+                caption += f" — {result['title'][:50]}"
 
-            file = FSInputFile(result.file_path)
+            file = FSInputFile(file_path)
             await bot.send_video(
                 chat_id=user_id,
                 video=file,
@@ -113,13 +117,13 @@ async def handle_bulk_stories(message: Message, bot: Bot, url: str, user_id: int
                 supports_streaming=True,
             )
             downloaded += 1
-            await record_download(user_id, url, "instagram", result.title, result.file_size)
+            await record_download(user_id, url, "instagram", result["title"], file_size)
             await progress_msg.delete()
         except Exception as e:
             failed += 1
             await progress_msg.edit_text(f"❌ Story {i}/{total} upload failed: {str(e)[:50]}")
         finally:
-            cleanup_file(result.file_path)
+            cleanup_file(file_path)
 
     # Summary
     summary = f"✅ Downloaded {downloaded}/{total} stories"
