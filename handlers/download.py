@@ -9,6 +9,7 @@ from services.downloader import download, get_info, cleanup_file, DownloadResult
 from services.limiter import is_downloading, set_active, clear_active, cancel_download
 from keyboards.inline import quality_keyboard, cancel_keyboard
 from config import config
+from services.url_store import store_url, get_url
 
 router = Router()
 
@@ -76,22 +77,30 @@ async def handle_link(message: Message, bot: Bot):
     await loading.edit_text(
         text,
         parse_mode="HTML",
-        reply_markup=quality_keyboard(url, platform),
+        reply_markup=quality_keyboard(store_url(url, platform), platform),
     )
 
 @router.callback_query(F.data.startswith("dl:"))
 async def process_download(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
 
-    # Parse callback data: dl:quality:url
+    # Parse callback data: dl:quality:short_id
     parts = callback.data.split(":", 2)
     if len(parts) < 3:
         await callback.answer("Invalid request")
         return
 
     quality = parts[1]
-    url = parts[2]
+    short_id = parts[2]
     audio_only = quality == "audio"
+
+    # Look up URL from store
+    url_data = get_url(short_id)
+    if not url_data:
+        await callback.message.edit_text("❌ Link expired. Please send the URL again.")
+        await callback.answer()
+        return
+    url, platform = url_data
 
     # Re-check limit
     ok, err = await can_download(user_id)
@@ -99,9 +108,6 @@ async def process_download(callback: CallbackQuery, bot: Bot):
         await callback.message.edit_text(err)
         await callback.answer()
         return
-
-    result = detect_platform(url)
-    platform = result[0] if result else "unknown"
 
     # Start download
     status_msg = await callback.message.edit_text(
