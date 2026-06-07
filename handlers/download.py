@@ -203,29 +203,49 @@ async def process_download(callback: CallbackQuery, bot: Bot):
 
     quality = parts[1]
     short_id = parts[2]
+
+    await callback.answer()
+    await process_quality_download(bot, user_id, quality, short_id, callback.message.chat.id, callback.message)
+
+
+async def process_quality_download(bot: Bot, user_id: int, quality: str, short_id: str, chat_id: int, edit_msg=None):
+    """Download logic shared between regular and premium (Stars-paid) downloads."""
     audio_only = quality == "audio"
 
     # Look up URL from store
     url_data = get_url(short_id)
     if not url_data:
-        await callback.message.edit_text("❌ Link expired. Please send the URL again.")
-        await callback.answer()
+        msg = "❌ Link expired. Please send the URL again."
+        if edit_msg:
+            await edit_msg.edit_text(msg)
+        else:
+            await bot.send_message(chat_id, msg)
         return
     url, platform = url_data
 
-    # Re-check limit
-    ok, err = await can_download(user_id)
-    if not ok:
-        await callback.message.edit_text(err)
-        await callback.answer()
-        return
+    # Re-check limit (skip for premium — they already paid)
+    if quality not in ("1080", "4k"):
+        ok, err = await can_download(user_id)
+        if not ok:
+            if edit_msg:
+                await edit_msg.edit_text(err)
+            else:
+                await bot.send_message(chat_id, err)
+            return
 
     # Start download
-    status_msg = await callback.message.edit_text(
-        "📥 <b>Downloading...</b>\n⏳ This may take a moment\n\n❌ /cancel to abort",
-        parse_mode="HTML",
-    )
-    await callback.answer()
+    status_msg = None
+    if edit_msg:
+        status_msg = await edit_msg.edit_text(
+            "📥 <b>Downloading...</b>\n⏳ This may take a moment\n\n❌ /cancel to abort",
+            parse_mode="HTML",
+        )
+    else:
+        status_msg = await bot.send_message(
+            chat_id,
+            "📥 <b>Downloading...</b>\n⏳ This may take a moment\n\n❌ /cancel to abort",
+            parse_mode="HTML",
+        )
 
     async def do_download():
         return await download(url, platform, audio_only=audio_only, quality=quality)
@@ -269,14 +289,14 @@ async def process_download(callback: CallbackQuery, bot: Bot):
         file = FSInputFile(result.file_path)
         if audio_only:
             await bot.send_audio(
-                chat_id=user_id,
+                chat_id=chat_id,
                 audio=file,
                 caption=caption,
                 parse_mode="HTML",
             )
         else:
             await bot.send_video(
-                chat_id=user_id,
+                chat_id=chat_id,
                 video=file,
                 caption=caption,
                 parse_mode="HTML",
