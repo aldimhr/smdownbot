@@ -29,10 +29,10 @@ class DownloadResult:
 def _base_opts(platform: str = None) -> dict:
     opts = {
         "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
+        "no-warnings": True,
+        "no-playlist": True,
         "output": os.path.join(config.DOWNLOAD_DIR, "%(id)s.%(ext)s"),
-        "socket_timeout": 30,
+        "socket-timeout": 30,
         "retries": 3,
     }
     cookie_file = os.path.join(config.COOKIES_DIR, f"{platform}.txt")
@@ -71,9 +71,9 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
     if audio_only:
         opts.update({
             "format": "bestaudio/best",
-            "extract_audio": True,
-            "audio_format": "mp3",
-            "audio_quality": "192",
+            "extract-audio": True,
+            "audio-format": "mp3",
+            "audio-quality": "192",
         })
     else:
         if quality == "720":
