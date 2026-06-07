@@ -31,23 +31,29 @@ def _base_opts(platform: str = None) -> dict:
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "outtmpl": os.path.join(config.DOWNLOAD_DIR, "%(id)s.%(ext)s"),
+        "output": os.path.join(config.DOWNLOAD_DIR, "%(id)s.%(ext)s"),
         "socket_timeout": 30,
         "retries": 3,
     }
     cookie_file = os.path.join(config.COOKIES_DIR, f"{platform}.txt")
     if os.path.exists(cookie_file):
-        opts["cookiefile"] = cookie_file
+        opts["cookies"] = cookie_file
     return opts
 
 async def get_info(url: str, platform: str = None) -> Optional[dict]:
     """Get video info without downloading."""
-    opts = _base_opts(platform)
-    opts.update({"skip_download": True, "extract_flat": False})
+    cmd = [YTDLP, "--dump-json", "--no-download", "--no-playlist"]
+
+    # Only pass CLI-compatible options
+    cookie_file = os.path.join(config.COOKIES_DIR, f"{platform}.txt")
+    if os.path.exists(cookie_file):
+        cmd.extend(["--cookies", cookie_file])
+
+    cmd.append(url)
+
     proc = await asyncio.create_subprocess_exec(
-        YTDLP, "--dump-json", "--no-download", url,
+        *cmd,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "PYTHONUNBUFFERED": "1"}
     )
     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
     if proc.returncode != 0:
@@ -65,11 +71,9 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
     if audio_only:
         opts.update({
             "format": "bestaudio/best",
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }],
+            "extract_audio": True,
+            "audio_format": "mp3",
+            "audio_quality": "192",
         })
     else:
         if quality == "720":
@@ -89,8 +93,8 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
         if isinstance(v, bool):
             if v:
                 cmd.append(f"--{k}")
-        elif isinstance(v, str):
-            cmd.extend([f"--{k}", v])
+        elif isinstance(v, (str, int, float)):
+            cmd.extend([f"--{k}", str(v)])
         elif isinstance(v, list):
             for item in v:
                 cmd.extend([f"--{k}", json.dumps(item) if isinstance(item, dict) else str(item)])
