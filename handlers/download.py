@@ -48,6 +48,11 @@ async def handle_username(message: Message, bot: Bot):
 
 async def handle_bulk_stories(message: Message, bot: Bot, url: str, user_id: int):
     """Handle bulk story download for instagram.com/stories/username/"""
+    # Extract username from URL
+    import re
+    match = re.search(r"stories/([\w.]+)", url)
+    username = match.group(1) if match else "user"
+
     loading = await message.answer("🔍 Fetching stories list...")
 
     stories = await get_stories_list(url)
@@ -78,7 +83,8 @@ async def handle_bulk_stories(message: Message, bot: Bot, url: str, user_id: int
 
         # Download
         from services.downloader import download as dl_func, cleanup_file
-        result = await dl_func(story.url or f"{url}{story.id}", "instagram")
+        story_url = f"https://www.instagram.com/stories/{username}/{story.id}"
+        result = await dl_func(story_url, "instagram")
 
         if not result.success:
             failed += 1

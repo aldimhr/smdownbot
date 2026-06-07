@@ -128,8 +128,8 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
     # Get title from info
     info = await get_info(url, platform)
     title = info.get("title", "Download") if info else "Download"
-    duration = info.get("duration")
-    thumbnail = info.get("thumbnail")
+    duration = info.get("duration") if info else None
+    thumbnail = info.get("thumbnail") if info else None
 
     return DownloadResult(
         success=True,
