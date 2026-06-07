@@ -60,7 +60,10 @@ async def handle_bulk_stories(message: Message, bot: Bot, url: str, user_id: int
         return
 
     total = len(stories)
-    await loading.edit_text(f"📖 Found {total} stories from this user. Starting download...")
+    note = ""
+    if total <= 8:
+        note = "\n\n💡 <i>Note: Some stories may not be visible if the bot doesn't follow this user.</i>"
+    await loading.edit_text(f"📖 Found {total} stories from this user. Starting download...{note}")
 
     downloaded = 0
     failed = 0
