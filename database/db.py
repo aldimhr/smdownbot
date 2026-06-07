@@ -119,3 +119,47 @@ async def ban_user(user_id: int, ban: bool = True):
         await db.commit()
     finally:
         await db.close()
+
+async def get_all_users():
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall("SELECT * FROM users ORDER BY created_at DESC")
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+async def get_recent_downloads(limit: int = 50):
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM downloads ORDER BY created_at DESC LIMIT ?", (limit,)
+        )
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+async def get_user_by_id(user_id: int):
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        return dict(rows[0]) if rows else None
+    finally:
+        await db.close()
+
+async def set_user_limit(user_id: int, limit: int):
+    db = await get_db()
+    try:
+        await db.execute("UPDATE users SET daily_limit = ? WHERE user_id = ?", (limit, user_id))
+        await db.commit()
+    finally:
+        await db.close()
+
+async def get_daily_stats(days: int = 7):
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall(
+            "SELECT date, total_downloads FROM stats ORDER BY date DESC LIMIT ?", (days,)
+        )
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
