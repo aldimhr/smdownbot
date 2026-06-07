@@ -30,6 +30,22 @@ def format_duration(seconds: int) -> str:
     else:
         return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
 
+@router.message(F.text.regexp(r"^@[\w.]{1,30}$"))
+async def handle_username(message: Message, bot: Bot):
+    """Handle @username - fetch all Instagram stories."""
+    user_id = message.from_user.id
+    username = message.text.strip().lstrip("@")
+
+    # Check daily limit
+    ok, err = await can_download(user_id)
+    if not ok:
+        await message.answer(err)
+        return
+
+    url = f"https://www.instagram.com/stories/{username}/"
+    await handle_bulk_stories(message, bot, url, user_id)
+
+
 async def handle_bulk_stories(message: Message, bot: Bot, url: str, user_id: int):
     """Handle bulk story download for instagram.com/stories/username/"""
     loading = await message.answer("🔍 Fetching stories list...")
