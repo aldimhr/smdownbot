@@ -1,0 +1,150 @@
+import asyncio
+import os
+import json
+import re
+import glob
+from dataclasses import dataclass
+from typing import Optional
+from config import config
+
+@dataclass
+class DownloadResult:
+    success: bool
+    file_path: Optional[str] = None
+    title: Optional[str] = None
+    duration: Optional[int] = None
+    file_size: Optional[int] = None
+    thumbnail: Optional[str] = None
+    platform: Optional[str] = None
+    error: Optional[str] = None
+    formats: Optional[list] = None
+
+def _base_opts(platform: str = None) -> dict:
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "outtmpl": os.path.join(config.DOWNLOAD_DIR, "%(id)s.%(ext)s"),
+        "socket_timeout": 30,
+        "retries": 3,
+    }
+    cookie_file = os.path.join(config.COOKIES_DIR, f"{platform}.txt")
+    if os.path.exists(cookie_file):
+        opts["cookiefile"] = cookie_file
+    return opts
+
+async def get_info(url: str, platform: str = None) -> Optional[dict]:
+    """Get video info without downloading."""
+    opts = _base_opts(platform)
+    opts.update({"skip_download": True, "extract_flat": False})
+    proc = await asyncio.create_subprocess_exec(
+        "yt-dlp", "--dump-json", "--no-download", url,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"}
+    )
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(stdout.decode())
+    except json.JSONDecodeError:
+        return None
+
+async def download(url: str, platform: str = None, audio_only: bool = False, quality: str = "best") -> DownloadResult:
+    """Download video/audio via yt-dlp."""
+    os.makedirs(config.DOWNLOAD_DIR, exist_ok=True)
+    opts = _base_opts(platform)
+
+    if audio_only:
+        opts.update({
+            "format": "bestaudio/best",
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+        })
+    else:
+        if quality == "720":
+            opts["format"] = "bestvideo[height<=720]+bestaudio/best[height<=720]/best"
+        elif quality == "480":
+            opts["format"] = "bestvideo[height<=480]+bestaudio/best[height<=480]/best"
+        else:
+            opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+
+    # TikTok: prefer no-watermark
+    if platform == "tiktok":
+        opts["format"] = "best"
+
+    # Build command
+    cmd = ["yt-dlp"]
+    for k, v in opts.items():
+        if isinstance(v, bool):
+            if v:
+                cmd.append(f"--{k}")
+        elif isinstance(v, str):
+            cmd.extend([f"--{k}", v])
+        elif isinstance(v, list):
+            for item in v:
+                cmd.extend([f"--{k}", json.dumps(item) if isinstance(item, dict) else str(item)])
+        elif isinstance(v, dict):
+            for dk, dv in v.items():
+                cmd.extend([f"--{dk}", str(dv)])
+
+    cmd.extend(["--print", "after_move:filepath"])
+    cmd.append(url)
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(
+        proc.communicate(), timeout=config.YT_DLP_TIMEOUT
+    )
+
+    if proc.returncode != 0:
+        err = stderr.decode().strip().split("\n")[-1]
+        return DownloadResult(success=False, error=err[:200])
+
+    filepath = stdout.decode().strip().split("\n")[-1]
+    if not os.path.exists(filepath):
+        return DownloadResult(success=False, error="File not found after download")
+
+    file_size = os.path.getsize(filepath)
+
+    # Get title from info
+    info = await get_info(url, platform)
+    title = info.get("title", "Download") if info else "Download"
+    duration = info.get("duration")
+    thumbnail = info.get("thumbnail")
+
+    return DownloadResult(
+        success=True,
+        file_path=filepath,
+        title=title[:100],
+        duration=duration,
+        file_size=file_size,
+        thumbnail=thumbnail,
+        platform=platform,
+    )
+
+def cleanup_file(path: str):
+    """Delete downloaded file."""
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+def cleanup_old_files(max_age_hours: int = 1):
+    """Clean files older than max_age_hours."""
+    import time
+    now = time.time()
+    cutoff = now - (max_age_hours * 3600)
+    for f in glob.glob(os.path.join(config.DOWNLOAD_DIR, "*")):
+        if os.path.getmtime(f) < cutoff:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
