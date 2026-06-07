@@ -12,6 +12,8 @@ class Config:
     DAILY_LIMIT: int = int(os.getenv("DAILY_LIMIT", "20"))
     STARS_EXTRA_DOWNLOADS: int = 10
     STARS_PRICE: int = 50  # Stars per extra pack
+    STARS_AUDIO: int = 2   # Stars for audio download
+    STARS_720P: int = 3    # Stars for 720p download
     STARS_1080P: int = 5   # Stars for 1080p download
     STARS_4K: int = 10     # Stars for 4K/best quality download
     YT_DLP_TIMEOUT: int = 300  # 5 min max per download

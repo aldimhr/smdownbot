@@ -14,12 +14,16 @@ router = Router()
 _pending_downloads: dict[str, tuple[str, str]] = {}
 
 QUALITY_PRICES = {
+    "audio": config.STARS_AUDIO,
+    "720": config.STARS_720P,
     "1080": config.STARS_1080P,
     "4k": config.STARS_4K,
 }
 
 QUALITY_LABELS = {
-    "1080": "1080p HD",
+    "audio": "Audio MP3",
+    "720": "720p HD",
+    "1080": "1080p Full HD",
     "4k": "4K Best Quality",
 }
 

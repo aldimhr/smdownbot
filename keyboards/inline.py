@@ -6,14 +6,14 @@ def quality_keyboard(short_id: str, platform: str) -> InlineKeyboardMarkup:
     buttons = []
     if platform in ("youtube", "unknown"):
         buttons.append([
-            InlineKeyboardButton(text="🎵 Audio MP3", callback_data=f"dl:audio:{short_id}"),
-            InlineKeyboardButton(text="📱 480p", callback_data=f"dl:480:{short_id}"),
+            InlineKeyboardButton(text="📱 480p (Free)", callback_data=f"dl:480:{short_id}"),
         ])
         buttons.append([
-            InlineKeyboardButton(text="🎬 720p", callback_data=f"dl:720:{short_id}"),
+            InlineKeyboardButton(text="🎵 Audio MP3 ⭐2", callback_data=f"pm:audio:{short_id}"),
+            InlineKeyboardButton(text="🎬 720p ⭐3", callback_data=f"pm:720:{short_id}"),
+        ])
+        buttons.append([
             InlineKeyboardButton(text="🔥 1080p ⭐5", callback_data=f"pm:1080:{short_id}"),
-        ])
-        buttons.append([
             InlineKeyboardButton(text="⭐ 4K Best ⭐10", callback_data=f"pm:4k:{short_id}"),
         ])
     elif platform == "tiktok":

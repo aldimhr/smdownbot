@@ -224,7 +224,7 @@ async def process_quality_download(bot: Bot, user_id: int, quality: str, short_i
     url, platform = url_data
 
     # Re-check limit (skip for premium — they already paid)
-    if quality not in ("1080", "4k"):
+    if quality not in ("audio", "720", "1080", "4k"):
         ok, err = await can_download(user_id)
         if not ok:
             if edit_msg:
