@@ -15,7 +15,8 @@ PATTERNS = {
         r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/|youtube\.com/embed/)([\w-]+)",
     ],
     "instagram": [
-        r"instagram\.com/(?:p|reel|reels|stories)/([\w-]+)",
+        r"instagram\.com/(?:p|reel|reels)/([\w-]+)",
+        r"instagram\.com/stories/[\w.]+/(\d+)",
     ],
     "tiktok": [
         r"(?:tiktok\.com/@[\w.]+/video/|vm\.tiktok\.com/|vt\.tiktok\.com/)([\w-]+)",

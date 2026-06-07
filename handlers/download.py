@@ -1,7 +1,7 @@
 import asyncio
 import os
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InputFile
+from aiogram.types import Message, CallbackQuery, InputFile, Document
 from aiogram.filters import Command
 from database.db import can_download, record_download, use_extra_download
 from services.platform import detect_platform, get_platform_info
@@ -58,7 +58,22 @@ async def handle_link(message: Message, bot: Bot):
 
     info = await get_info(url, platform)
     if not info:
-        await loading.edit_text("❌ Couldn't fetch video info. The link might be private or invalid.")
+        # Better error for stories without cookies
+        is_story = "stories/" in url
+        cookies_exist = os.path.exists(os.path.join(config.COOKIES_DIR, "instagram.txt"))
+        if is_story and not cookies_exist:
+            await loading.edit_text(
+                "🔒 <b>Instagram Stories require login</b>\n\n"
+                "To download stories, you need to provide Instagram cookies:\n\n"
+                "1️⃣ Log into Instagram in your browser\n"
+                "2️⃣ Install 'Get cookies.txt LOCALLY' extension\n"
+                "3️⃣ Go to instagram.com and export cookies\n"
+                "4️⃣ Send the cookies.txt file to this bot\n\n"
+                "💡 Posts and reels work without cookies!",
+                parse_mode="HTML",
+            )
+        else:
+            await loading.edit_text("❌ Couldn't fetch video info. The link might be private or invalid.")
         return
 
     title = info.get("title", "Unknown")[:80]
@@ -186,3 +201,41 @@ async def cancel_button(callback: CallbackQuery):
     if cancel_download(callback.from_user.id):
         await callback.message.edit_text("❌ Download cancelled.")
     await callback.answer()
+
+@router.message(F.document)
+async def handle_cookies_file(message: Message):
+    """Handle uploaded cookies.txt files."""
+    doc = message.document
+    if not doc.file_name or not doc.file_name.endswith(".txt"):
+        return
+    
+    # Check if it looks like a cookies file
+    file_info = await message.bot.get_file(doc.file_id)
+    file_content = await message.bot.download_file(file_info.file_path)
+    content = file_content.read().decode("utf-8", errors="ignore")
+    
+    if "instagram" not in content.lower() and "ig" not in content.lower():
+        await message.answer(
+            "ℹ️ This doesn't look like an Instagram cookies file.\n\n"
+            "To export cookies:\n"
+            "1️⃣ Install 'Get cookies.txt LOCALLY' browser extension\n"
+            "2️⃣ Go to instagram.com (logged in)\n"
+            "3️⃣ Click the extension icon → Export\n"
+            "4️⃣ Send the downloaded .txt file here"
+        )
+        return
+    
+    # Save cookies
+    os.makedirs(config.COOKIES_DIR, exist_ok=True)
+    cookie_path = os.path.join(config.COOKIES_DIR, "instagram.txt")
+    with open(cookie_path, "w") as f:
+        f.write(content)
+    
+    await message.answer(
+        "✅ <b>Instagram cookies saved!</b>\n\n"
+        "You can now download:\n"
+        "📸 Posts & Reels\n"
+        "📖 Stories (even from private accounts you follow)\n\n"
+        "Just send me any Instagram link!",
+        parse_mode="HTML",
+    )

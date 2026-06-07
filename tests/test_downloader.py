@@ -29,6 +29,12 @@ class TestPlatformDetection:
         assert result is not None
         assert result[0] == "instagram"
 
+    def test_instagram_story(self):
+        result = detect_platform("https://www.instagram.com/stories/dr_tompi/3913401630049724573?utm_source=ig_story_item_share&igsh=enVkcmdqenVuenpl")
+        assert result is not None
+        assert result[0] == "instagram"
+        assert result[1] == "3913401630049724573"
+
     def test_tiktok_video(self):
         result = detect_platform("https://www.tiktok.com/@user/video/7123456789")
         assert result is not None
