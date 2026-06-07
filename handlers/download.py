@@ -132,7 +132,7 @@ async def handle_link(message: Message, bot: Bot):
     pinfo = get_platform_info(platform)
 
     # Check for bulk stories (instagram.com/stories/username/ without specific story ID)
-    if platform == "instagram" and not video_id and "stories/" in url:
+    if platform == "instagram" and "stories/" in url and not video_id.isdigit():
         await handle_bulk_stories(message, bot, url, user_id)
         return
 
