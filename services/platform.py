@@ -17,6 +17,7 @@ PATTERNS = {
     "instagram": [
         r"instagram\.com/(?:p|reel|reels)/([\w-]+)",
         r"instagram\.com/stories/[\w.]+/(\d+)",
+        r"instagram\.com/stories/([\w.]+)/?$",
     ],
     "tiktok": [
         r"(?:tiktok\.com/@[\w.]+/video/|vm\.tiktok\.com/|vt\.tiktok\.com/)([\w-]+)",

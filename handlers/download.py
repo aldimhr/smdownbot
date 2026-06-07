@@ -10,6 +10,7 @@ from services.limiter import is_downloading, set_active, clear_active, cancel_do
 from keyboards.inline import quality_keyboard, cancel_keyboard
 from config import config
 from services.url_store import store_url, get_url
+from services.bulk_stories import get_stories_list
 
 router = Router()
 
@@ -28,6 +29,82 @@ def format_duration(seconds: int) -> str:
         return f"{seconds // 60}m {seconds % 60}s"
     else:
         return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+
+async def handle_bulk_stories(message: Message, bot: Bot, url: str, user_id: int):
+    """Handle bulk story download for instagram.com/stories/username/"""
+    loading = await message.answer("🔍 Fetching stories list...")
+
+    stories = await get_stories_list(url)
+    if not stories:
+        await loading.edit_text("❌ No stories found for this user.")
+        return
+
+    total = len(stories)
+    await loading.edit_text(f"📖 Found {total} stories from this user. Starting download...")
+
+    downloaded = 0
+    failed = 0
+
+    for i, story in enumerate(stories, 1):
+        # Check daily limit
+        ok, err = await can_download(user_id)
+        if not ok:
+            await message.answer(f"⚠️ Daily limit reached after {downloaded} downloads.\n{err}")
+            break
+
+        # Check if cancelled
+        if is_downloading(user_id) and cancel_download(user_id):
+            await message.answer(f"❌ Cancelled after {downloaded}/{total} stories.")
+            return
+
+        # Update progress
+        progress_msg = await message.answer(f"📥 Downloading story {i}/{total}...")
+
+        # Download
+        from services.downloader import download as dl_func, cleanup_file
+        result = await dl_func(story.url or f"{url}{story.id}", "instagram")
+
+        if not result.success:
+            failed += 1
+            await progress_msg.edit_text(f"❌ Story {i}/{total} failed: {result.error[:50] if result.error else 'Unknown error'}")
+            continue
+
+        # Check size
+        if result.file_size > config.MAX_FILE_SIZE:
+            cleanup_file(result.file_path)
+            failed += 1
+            await progress_msg.edit_text(f"❌ Story {i}/{total} too large ({result.file_size // (1024*1024)}MB)")
+            continue
+
+        # Send
+        try:
+            caption = f"📖 Story {i}/{total}"
+            if result.title:
+                caption += f" — {result.title[:50]}"
+
+            file = FSInputFile(result.file_path)
+            await bot.send_video(
+                chat_id=user_id,
+                video=file,
+                caption=caption,
+                parse_mode="HTML",
+                supports_streaming=True,
+            )
+            downloaded += 1
+            await record_download(user_id, url, "instagram", result.title, result.file_size)
+            await progress_msg.delete()
+        except Exception as e:
+            failed += 1
+            await progress_msg.edit_text(f"❌ Story {i}/{total} upload failed: {str(e)[:50]}")
+        finally:
+            cleanup_file(result.file_path)
+
+    # Summary
+    summary = f"✅ Downloaded {downloaded}/{total} stories"
+    if failed:
+        summary += f" ({failed} failed)"
+    await message.answer(summary)
+
 
 @router.message(F.text.regexp(r"https?://\S+"))
 async def handle_link(message: Message, bot: Bot):
@@ -53,6 +130,11 @@ async def handle_link(message: Message, bot: Bot):
 
     platform, video_id = result
     pinfo = get_platform_info(platform)
+
+    # Check for bulk stories (instagram.com/stories/username/ without specific story ID)
+    if platform == "instagram" and not video_id and "stories/" in url:
+        await handle_bulk_stories(message, bot, url, user_id)
+        return
 
     # Show info + quality options
     loading = await message.answer(f"🔍 Analyzing link... {pinfo.icon}")
