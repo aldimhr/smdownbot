@@ -3,11 +3,14 @@ import os
 import json
 import re
 import glob
+import logging
 from dataclasses import dataclass
 from typing import Optional
 from config import config
 import shutil
 import sys
+
+logger = logging.getLogger("smdownbot.downloader")
 
 # Find yt-dlp: prefer venv copy, fallback to system
 YTDLP = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
@@ -40,7 +43,21 @@ def _base_opts(platform: str = None) -> dict:
         opts["cookies"] = cookie_file
     return opts
 
-async def get_info(url: str, platform: str = None) -> Optional[dict]:
+def _is_auth_error(stderr: str) -> bool:
+    """Check if error indicates expired/invalid cookies."""
+    auth_patterns = [
+        "You need to log in",
+        "login required",
+        "authentication",
+        "HTTP Error 401",
+        "HTTP Error 403",
+        "Private content",
+    ]
+    lower = stderr.lower()
+    return any(p.lower() in lower for p in auth_patterns)
+
+
+async def get_info(url: str, platform: str = None, _retry: bool = True) -> Optional[dict]:
     """Get video info without downloading."""
     cmd = [YTDLP, "--dump-json", "--no-download", "--no-playlist"]
 
@@ -57,6 +74,12 @@ async def get_info(url: str, platform: str = None) -> Optional[dict]:
     )
     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
     if proc.returncode != 0:
+        err = stderr.decode()
+        if _retry and platform == "instagram" and _is_auth_error(err):
+            logger.info("Auth error in get_info, auto-refreshing cookies...")
+            from services.cookies import handle_auth_failure
+            if await handle_auth_failure():
+                return await get_info(url, platform, _retry=False)
         return None
     try:
         return json.loads(stdout.decode())
@@ -117,6 +140,55 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
 
     if proc.returncode != 0:
         err = stderr.decode().strip().split("\n")[-1]
+        # Auto-refresh cookies on auth failure
+        if platform == "instagram" and _is_auth_error(err):
+            logger.info("Auth error in download, auto-refreshing cookies...")
+            from services.cookies import handle_auth_failure
+            if await handle_auth_failure():
+                # Retry download with fresh cookies
+                cookie_file = os.path.join(config.COOKIES_DIR, f"{platform}.txt")
+                if os.path.exists(cookie_file):
+                    opts["cookies"] = cookie_file
+                    cmd = [YTDLP]
+                    for k, v in opts.items():
+                        flag = f"--{k.replace('_', '-')}"
+                        if isinstance(v, bool):
+                            if v:
+                                cmd.append(flag)
+                        elif isinstance(v, (str, int, float)):
+                            cmd.extend([flag, str(v)])
+                        elif isinstance(v, list):
+                            for item in v:
+                                cmd.extend([flag, json.dumps(item) if isinstance(item, dict) else str(item)])
+                        elif isinstance(v, dict):
+                            for dk, dv in v.items():
+                                cmd.extend([f"--{dk}", str(dv)])
+                    cmd.extend(["--print", "after_move:filepath"])
+                    cmd.append(url)
+
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(), timeout=config.YT_DLP_TIMEOUT
+                    )
+                    if proc.returncode == 0:
+                        filepath = stdout.decode().strip().split("\n")[-1]
+                        if os.path.exists(filepath):
+                            file_size = os.path.getsize(filepath)
+                            info = await get_info(url, platform, _retry=False)
+                            return DownloadResult(
+                                success=True,
+                                file_path=filepath,
+                                title=(info.get("title", "Download") if info else "Download")[:100],
+                                duration=info.get("duration") if info else None,
+                                file_size=file_size,
+                                thumbnail=info.get("thumbnail") if info else None,
+                                platform=platform,
+                            )
+                    err = stderr.decode().strip().split("\n")[-1]
         return DownloadResult(success=False, error=err[:200])
 
     filepath = stdout.decode().strip().split("\n")[-1]

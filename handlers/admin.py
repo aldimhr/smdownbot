@@ -296,3 +296,16 @@ async def cmd_broadcast(message: Message):
             failed += 1
 
     await status_msg.edit_text(f"📢 Broadcast complete!\n✅ Sent: {sent}\n❌ Failed: {failed}")
+
+# ─── /refreshcookies command ─────────────────────────────────
+@router.message(Command("refreshcookies"))
+async def cmd_refresh_cookies(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    status = await message.answer("🔄 Refreshing Instagram cookies...")
+    from services.cookies import refresh_cookies
+    success = await refresh_cookies()
+    if success:
+        await status.edit_text("✅ Instagram cookies refreshed successfully!")
+    else:
+        await status.edit_text("❌ Cookie refresh failed. Check logs.")
