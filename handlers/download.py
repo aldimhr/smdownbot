@@ -1,7 +1,7 @@
 import asyncio
 import os
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InputFile
+from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.filters import Command
 from database.db import can_download, record_download, use_extra_download
 from services.platform import detect_platform, get_platform_info
@@ -155,7 +155,7 @@ async def process_download(callback: CallbackQuery, bot: Bot):
             caption += f"\n⏱ {format_duration(result.duration)}"
         caption += f"\n💾 {format_size(result.file_size)}"
 
-        file = InputFile(result.file_path)
+        file = FSInputFile(result.file_path)
         if audio_only:
             await bot.send_audio(
                 chat_id=user_id,
