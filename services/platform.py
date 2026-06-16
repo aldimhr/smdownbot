@@ -14,6 +14,13 @@ PATTERNS = {
     "youtube": [
         r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/|youtube\.com/embed/)([\w-]+)",
     ],
+    "facebook": [
+        r"facebook\.com/(?:reel|share/r|share/v)/([\w.-]+)",
+        r"facebook\.com/watch/\?v=(\d+)",
+        r"facebook\.com/.*/videos/(\d+)",
+        r"facebook\.com/story\.php\?.*story_fbid=(\d+)",
+        r"fb\.watch/([\w-]+)",
+    ],
     "instagram": [
         r"instagram\.com/(?:p|reel|reels)/([\w-]+)",
         r"instagram\.com/stories/[\w.]+/(\d+)",
@@ -26,6 +33,7 @@ PATTERNS = {
 
 PLATFORM_META = {
     "youtube": PlatformInfo("YouTube", "🔴", supports_audio=True, supports_quality=True),
+    "facebook": PlatformInfo("Facebook", "📘", supports_audio=False, supports_quality=False),
     "instagram": PlatformInfo("Instagram", "📸", supports_audio=False, supports_quality=False),
     "tiktok": PlatformInfo("TikTok", "🎵", supports_audio=True, supports_quality=False, note="No-watermark available"),
 }

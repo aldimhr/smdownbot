@@ -21,7 +21,7 @@ def quality_keyboard(short_id: str, platform: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🎬 Video", callback_data=f"dl:best:{short_id}"),
             InlineKeyboardButton(text="🎵 Audio Only", callback_data=f"dl:audio:{short_id}"),
         ])
-    elif platform == "instagram":
+    elif platform in ("instagram", "facebook"):
         buttons.append([
             InlineKeyboardButton(text="📥 Download", callback_data=f"dl:best:{short_id}"),
         ])

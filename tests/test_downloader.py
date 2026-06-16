@@ -1,5 +1,7 @@
+import asyncio
 import pytest
 from services.platform import detect_platform, get_platform_info
+from services import downloader
 
 
 class TestPlatformDetection:
@@ -35,6 +37,18 @@ class TestPlatformDetection:
         assert result[0] == "instagram"
         assert result[1] == "3913401630049724573"
 
+    def test_facebook_reel(self):
+        result = detect_platform("https://www.facebook.com/reel/123456789012345")
+        assert result is not None
+        assert result[0] == "facebook"
+        assert result[1] == "123456789012345"
+
+    def test_fb_watch(self):
+        result = detect_platform("https://fb.watch/AbCdEfGhIJ/")
+        assert result is not None
+        assert result[0] == "facebook"
+        assert result[1] == "AbCdEfGhIJ"
+
     def test_tiktok_video(self):
         result = detect_platform("https://www.tiktok.com/@user/video/7123456789")
         assert result is not None
@@ -59,6 +73,44 @@ class TestPlatformDetection:
         assert info.name == "YouTube"
         assert info.supports_audio is True
 
+    def test_facebook_platform_info(self):
+        info = get_platform_info("facebook")
+        assert info.name == "Facebook"
+        assert info.supports_quality is False
+
     def test_unknown_platform_info(self):
         info = get_platform_info("foobar")
         assert info.name == "Unknown"
+
+
+class TestDownloaderTimeoutHandling:
+    def test_download_timeout_returns_friendly_error(self, monkeypatch, tmp_path):
+        class HangingProcess:
+            returncode = 0
+
+            def __init__(self):
+                self.killed = False
+
+            async def communicate(self):
+                if self.killed:
+                    return b"", b""
+                await asyncio.sleep(3600)
+
+            def kill(self):
+                self.killed = True
+
+        proc = HangingProcess()
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            return proc
+
+        monkeypatch.setattr(downloader.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+        monkeypatch.setattr(downloader.config, "DOWNLOAD_DIR", str(tmp_path))
+        monkeypatch.setattr(downloader.config, "YT_DLP_TIMEOUT", 1)
+
+        result = asyncio.run(downloader.download("https://www.facebook.com/reel/123", "facebook"))
+
+        assert result.success is False
+        assert result.error is not None
+        assert "timed out" in result.error.lower()
+        assert getattr(proc, "killed", False) is True

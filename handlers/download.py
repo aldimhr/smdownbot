@@ -154,7 +154,7 @@ async def handle_link(message: Message, bot: Bot):
     # Detect platform
     result = detect_platform(url)
     if not result:
-        await message.answer("❌ I couldn't recognize that link.\nSupported: YouTube, Instagram, TikTok")
+        await message.answer("❌ I couldn't recognize that link.\nSupported: YouTube, Facebook, Instagram, TikTok")
         return
 
     platform, video_id = result
