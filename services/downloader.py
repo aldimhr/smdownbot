@@ -85,9 +85,12 @@ async def get_info(url: str, platform: str = None, _retry: bool = True) -> Optio
         *cmd,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await _communicate_with_timeout(
-        proc, 60, context=f"info fetch for {platform or 'unknown'}"
-    )
+    try:
+        stdout, stderr = await _communicate_with_timeout(
+            proc, 60, context=f"info fetch for {platform or 'unknown'}"
+        )
+    except asyncio.TimeoutError:
+        return None
     if proc.returncode != 0:
         err = stderr.decode()
         if _retry and platform == "instagram" and _is_auth_error(err):

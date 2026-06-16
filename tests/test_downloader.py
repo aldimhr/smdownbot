@@ -84,6 +84,32 @@ class TestPlatformDetection:
 
 
 class TestDownloaderTimeoutHandling:
+    def test_get_info_timeout_returns_none(self, monkeypatch):
+        class HangingProcess:
+            def __init__(self):
+                self.killed = False
+                self.returncode = 0
+
+            async def communicate(self):
+                if self.killed:
+                    return b"", b""
+                await asyncio.sleep(3600)
+
+            def kill(self):
+                self.killed = True
+
+        proc = HangingProcess()
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            return proc
+
+        monkeypatch.setattr(downloader.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+        result = asyncio.run(downloader.get_info("https://www.facebook.com/share/v/1EA8NFu4WJ/", "facebook"))
+
+        assert result is None
+        assert proc.killed is True
+
     def test_download_timeout_returns_friendly_error(self, monkeypatch, tmp_path):
         class HangingProcess:
             returncode = 0
