@@ -5,6 +5,7 @@ from aiogram.types import (
 )
 from aiogram.filters import Command
 from database.db import add_extra_downloads, get_or_create_user
+from handlers.admin import is_admin
 from config import config
 
 router = Router()
@@ -12,6 +13,7 @@ router = Router()
 # In-memory store for pending premium downloads
 # Key: f"premium_{user_id}", Value: (quality, short_id)
 _pending_downloads: dict[str, tuple[str, str]] = {}
+_pending_direct_links: dict[str, str] = {}
 
 QUALITY_PRICES = {
     "audio": config.STARS_AUDIO,
@@ -97,6 +99,37 @@ async def premium_quality_callback(callback: CallbackQuery, bot: Bot):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("lk:"))
+async def premium_direct_link_callback(callback: CallbackQuery, bot: Bot):
+    callback_data = callback.data or ""
+    parts = callback_data.split(":", 2)
+    if len(parts) < 3:
+        await callback.answer("Invalid request")
+        return
+
+    short_id = parts[2]
+    user_id = callback.from_user.id
+
+    if is_admin(user_id):
+        await callback.answer()
+        from handlers.download import process_direct_link_download
+        chat_id = callback.message.chat.id if callback.message else user_id
+        await process_direct_link_download(bot, user_id, short_id, chat_id, callback.message)
+        return
+
+    _pending_direct_links[f"direct_link_{user_id}"] = short_id
+
+    await bot.send_invoice(
+        chat_id=user_id,
+        title="Single-file direct link",
+        description="Get one downloadable file via temporary direct link",
+        payload=f"direct_link_{user_id}",
+        currency="XTR",
+        prices=[LabeledPrice(label="Single-file link", amount=config.STARS_DIRECT_LINK)],
+    )
+    await callback.answer()
+
+
 # ─── Pre-checkout (required by Telegram) ────────────────────
 @router.pre_checkout_query()
 async def process_pre_checkout(pre_checkout: PreCheckoutQuery, bot: Bot):
@@ -107,6 +140,8 @@ async def process_pre_checkout(pre_checkout: PreCheckoutQuery, bot: Bot):
 @router.message(F.successful_payment)
 async def process_successful_payment(message: Message):
     payment = message.successful_payment
+    if not payment:
+        return
     user_id = message.from_user.id
     payload = payment.invoice_payload
 
@@ -152,3 +187,26 @@ async def process_successful_payment(message: Message):
         # We need to import and call the download logic directly
         from handlers.download import process_quality_download
         await process_quality_download(message.bot, user_id, quality, short_id, message.chat.id)
+
+    elif payload.startswith("direct_link_"):
+        pending_key = f"direct_link_{user_id}"
+        short_id = _pending_direct_links.pop(pending_key, None)
+
+        if not short_id:
+            await message.answer(
+                f"✅ Payment received ({payment.total_amount} Stars)!\n\n"
+                f"⚠️ Link request expired. Please send the link again.",
+                parse_mode="HTML",
+            )
+            return
+
+        await message.answer(
+            f"✅ <b>Payment successful!</b>\n\n"
+            f"🔗 Delivery: <b>Temporary single-file link</b>\n"
+            f"💰 Paid: <b>{payment.total_amount}</b> Stars\n\n"
+            f"📥 Preparing your file...",
+            parse_mode="HTML",
+        )
+
+        from handlers.download import process_direct_link_download
+        await process_direct_link_download(message.bot, user_id, short_id, message.chat.id)

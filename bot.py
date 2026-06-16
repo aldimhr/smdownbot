@@ -10,6 +10,7 @@ from aiogram.enums import ParseMode
 
 from config import config
 from database.models import init_db
+from database.db import cleanup_expired_direct_links
 from handlers import start, download, admin, stars
 
 logging.basicConfig(
@@ -22,8 +23,10 @@ logger = logging.getLogger("smdownbot")
 async def on_startup(bot: Bot):
     os.makedirs(config.DOWNLOAD_DIR, exist_ok=True)
     os.makedirs(config.COOKIES_DIR, exist_ok=True)
+    os.makedirs(config.DIRECT_LINK_DIR, exist_ok=True)
     os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
     await init_db(config.DB_PATH)
+    await cleanup_expired_direct_links()
     logger.info("Bot started. DB initialized.")
 
 async def main():

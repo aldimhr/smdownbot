@@ -1,4 +1,5 @@
 import aiosqlite
+import os
 from datetime import date, datetime
 from config import config
 
@@ -176,5 +177,57 @@ async def get_daily_stats(days: int = 7):
             "SELECT date, total_downloads FROM stats ORDER BY date DESC LIMIT ?", (days,)
         )
         return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def create_direct_link(token: str, user_id: int, platform: str, title: str, file_path: str, file_size: int, expires_at: str):
+    db = await get_db()
+    try:
+        await db.execute(
+            "INSERT OR REPLACE INTO direct_links (token, user_id, platform, title, file_path, file_size, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (token, user_id, platform, title, file_path, file_size, expires_at),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_direct_link(token: str):
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall("SELECT * FROM direct_links WHERE token = ?", (token,))
+        return dict(rows[0]) if rows else None
+    finally:
+        await db.close()
+
+
+async def delete_direct_link(token: str):
+    db = await get_db()
+    try:
+        await db.execute("DELETE FROM direct_links WHERE token = ?", (token,))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def cleanup_expired_direct_links(now_iso: str | None = None):
+    now_iso = now_iso or datetime.utcnow().isoformat()
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall(
+            "SELECT token, file_path FROM direct_links WHERE expires_at <= ?",
+            (now_iso,),
+        )
+        for row in rows:
+            file_path = row["file_path"]
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+        await db.execute("DELETE FROM direct_links WHERE expires_at <= ?", (now_iso,))
+        await db.commit()
+        return len(rows)
     finally:
         await db.close()

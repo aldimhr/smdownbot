@@ -31,6 +31,18 @@ def quality_keyboard(short_id: str, platform: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def direct_link_keyboard(short_id: str, is_admin: bool = False) -> InlineKeyboardMarkup:
+    label = (
+        "🔗 Generate single-file link"
+        if is_admin
+        else f"🔗 Single-file link ⭐{config.STARS_DIRECT_LINK}"
+    )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=label, callback_data=f"lk:best:{short_id}")],
+        [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel")],
+    ])
+
+
 def cancel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Cancel Download", callback_data="cancel")]

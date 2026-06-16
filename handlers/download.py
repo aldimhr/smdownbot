@@ -6,8 +6,10 @@ from aiogram.filters import Command
 from database.db import can_download, record_download, use_extra_download
 from services.platform import detect_platform, get_platform_info
 from services.downloader import download, get_info, cleanup_file, DownloadResult
+from services.direct_links import is_large_or_long, publish_direct_link
 from services.limiter import is_downloading, set_active, clear_active, cancel_download
-from keyboards.inline import quality_keyboard, cancel_keyboard
+from keyboards.inline import quality_keyboard, cancel_keyboard, direct_link_keyboard
+from handlers.admin import is_admin
 from config import config
 from services.url_store import store_url, get_url
 from services.bulk_stories import get_stories_list
@@ -29,6 +31,51 @@ def format_duration(seconds: int) -> str:
         return f"{seconds // 60}m {seconds % 60}s"
     else:
         return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+
+
+def is_admin_user(user_id: int) -> bool:
+    return is_admin(user_id)
+
+
+def direct_link_offer_text(title: str, duration: int | None, is_admin_request: bool) -> str:
+    text = (
+        f"🎬 <b>{title}</b>\n"
+        f"📦 Too large for normal Telegram delivery."
+    )
+    if duration:
+        text += f"\n⏱ {format_duration(duration)}"
+    text += f"\n\n🔗 You can receive this as <b>one downloadable file</b> via a temporary direct link."
+    if is_admin_request:
+        text += "\n\n👑 Admin bypass is active for this request."
+    else:
+        text += f"\n\n⭐ Price: <b>{config.STARS_DIRECT_LINK} Stars</b>"
+    return text
+
+
+async def _publish_direct_link_result(bot: Bot, status_msg, user_id: int, chat_id: int, url: str, platform: str, result: DownloadResult):
+    published = await publish_direct_link(
+        result.file_path or "",
+        user_id=user_id,
+        platform=platform,
+        title=result.title or "Download",
+        file_size=result.file_size or 0,
+    )
+    result.file_path = published.file_path
+
+    caption = (
+        f"🔗 <b>Your single-file link is ready</b>\n"
+        f"🎬 <b>{result.title or 'Download'}</b>\n"
+    )
+    if result.duration:
+        caption += f"⏱ {format_duration(result.duration)}\n"
+    caption += (
+        f"💾 {format_size(result.file_size or 0)}\n"
+        f"⏳ Expires in {config.DIRECT_LINK_TTL_HOURS}h\n"
+        f"🌐 {published.url}"
+    )
+
+    await record_download(user_id, url, platform, result.title or "Download", result.file_size or 0)
+    await status_msg.edit_text(caption, parse_mode="HTML", disable_web_page_preview=True)
 
 @router.message(F.text.regexp(r"^@[\w.]{1,30}$"))
 async def handle_username(message: Message, bot: Bot):
@@ -187,6 +234,16 @@ async def handle_link(message: Message, bot: Bot):
     title = info.get("title", "Unknown")[:80]
     duration = info.get("duration")
     uploader = info.get("uploader", "")
+    short_id = store_url(url, platform)
+
+    if is_large_or_long(info):
+        await loading.edit_text(
+            direct_link_offer_text(title, duration, is_admin_user(user_id)),
+            parse_mode="HTML",
+            reply_markup=direct_link_keyboard(short_id, is_admin=is_admin_user(user_id)),
+            disable_web_page_preview=True,
+        )
+        return
 
     text = f"{pinfo.icon} <b>{title}</b>"
     if uploader:
@@ -199,7 +256,7 @@ async def handle_link(message: Message, bot: Bot):
     await loading.edit_text(
         text,
         parse_mode="HTML",
-        reply_markup=quality_keyboard(store_url(url, platform), platform),
+        reply_markup=quality_keyboard(short_id, platform),
     )
 
 @router.callback_query(F.data.startswith("dl:"))
@@ -216,7 +273,28 @@ async def process_download(callback: CallbackQuery, bot: Bot):
     short_id = parts[2]
 
     await callback.answer()
-    await process_quality_download(bot, user_id, quality, short_id, callback.message.chat.id, callback.message)
+    chat_id = callback.message.chat.id if callback.message else user_id
+    await process_quality_download(bot, user_id, quality, short_id, chat_id, callback.message)
+
+
+@router.callback_query(F.data.startswith("lk:"))
+async def process_direct_link_callback(callback: CallbackQuery, bot: Bot):
+    callback_data = callback.data or ""
+    parts = callback_data.split(":", 2)
+    if len(parts) < 3:
+        await callback.answer("Invalid request")
+        return
+
+    short_id = parts[2]
+    user_id = callback.from_user.id
+    chat_id = callback.message.chat.id if callback.message else user_id
+
+    if is_admin_user(user_id):
+        await callback.answer()
+        await process_direct_link_download(bot, user_id, short_id, chat_id, callback.message)
+        return
+
+    await callback.answer("Please complete the Stars payment to generate the single-file link.")
 
 
 async def process_quality_download(bot: Bot, user_id: int, quality: str, short_id: str, chat_id: int, edit_msg=None):
@@ -245,7 +323,6 @@ async def process_quality_download(bot: Bot, user_id: int, quality: str, short_i
             return
 
     # Start download
-    status_msg = None
     if edit_msg:
         status_msg = await edit_msg.edit_text(
             "📥 <b>Downloading...</b>\n⏳ This may take a moment\n\n❌ /cancel to abort",
@@ -277,57 +354,14 @@ async def process_quality_download(bot: Bot, user_id: int, quality: str, short_i
         await status_msg.edit_text(f"❌ Download failed:\n<code>{error_text}</code>", parse_mode="HTML")
         return
 
-    # Check file size — split if too large
-    if result.file_size > config.MAX_FILE_SIZE:
+    if result.file_size and result.file_size > config.MAX_FILE_SIZE:
+        cleanup_file(result.file_path or "")
         await status_msg.edit_text(
-            f"📦 File too large ({format_size(result.file_size)}). Splitting into parts...",
+            direct_link_offer_text(result.title or "Video", result.duration, is_admin_user(user_id)),
             parse_mode="HTML",
+            reply_markup=direct_link_keyboard(short_id, is_admin=is_admin_user(user_id)),
+            disable_web_page_preview=True,
         )
-        from services.downloader import split_video
-        try:
-            parts = await asyncio.get_event_loop().run_in_executor(
-                None, split_video, result.file_path
-            )
-        except Exception as e:
-            cleanup_file(result.file_path)
-            await status_msg.edit_text(
-                f"❌ Failed to split video: {str(e)[:100]}\n\nTry a lower quality: 480p or audio-only.",
-                parse_mode="HTML",
-            )
-            return
-
-        if len(parts) <= 1:
-            cleanup_file(result.file_path)
-            await status_msg.edit_text(
-                f"❌ File too large ({format_size(result.file_size)}).\n"
-                f"Telegram bot limit is 50MB.\n\n"
-                f"Try a lower quality: 480p or audio-only.",
-                parse_mode="HTML",
-            )
-            return
-
-        # Send each part
-        await status_msg.edit_text(f"📤 Uploading {len(parts)} parts...", parse_mode="HTML")
-        for i, part_path in enumerate(parts, 1):
-            try:
-                part_size = os.path.getsize(part_path)
-                caption = f"🎬 <b>{result.title}</b>\n📦 Part {i}/{len(parts)} — {format_size(part_size)}"
-                file = FSInputFile(part_path)
-                await bot.send_video(
-                    chat_id=chat_id,
-                    video=file,
-                    caption=caption,
-                    parse_mode="HTML",
-                    supports_streaming=True,
-                )
-                cleanup_file(part_path)
-            except Exception as e:
-                await bot.send_message(chat_id, f"❌ Part {i} upload failed: {str(e)[:50]}")
-                cleanup_file(part_path)
-
-        await record_download(user_id, url, platform, result.title, result.file_size)
-        await status_msg.delete()
-        cleanup_file(result.file_path)
         return
 
     # Send file
@@ -337,7 +371,7 @@ async def process_quality_download(bot: Bot, user_id: int, quality: str, short_i
         caption = f"🎬 <b>{result.title}</b>"
         if result.duration:
             caption += f"\n⏱ {format_duration(result.duration)}"
-        caption += f"\n💾 {format_size(result.file_size)}"
+        caption += f"\n💾 {format_size(result.file_size or 0)}"
 
         file = FSInputFile(result.file_path)
         if audio_only:
@@ -356,13 +390,65 @@ async def process_quality_download(bot: Bot, user_id: int, quality: str, short_i
                 supports_streaming=True,
             )
 
-        await record_download(user_id, url, platform, result.title, result.file_size)
+        await record_download(user_id, url, platform, result.title or "Download", result.file_size or 0)
         await status_msg.delete()
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Upload failed: {str(e)[:100]}")
     finally:
-        cleanup_file(result.file_path)
+        cleanup_file(result.file_path or "")
+
+
+async def process_direct_link_download(bot: Bot, user_id: int, short_id: str, chat_id: int, edit_msg=None):
+    url_data = get_url(short_id)
+    if not url_data:
+        msg = "❌ Link expired. Please send the URL again."
+        if edit_msg:
+            await edit_msg.edit_text(msg)
+        else:
+            await bot.send_message(chat_id, msg)
+        return
+    url, platform = url_data
+
+    if edit_msg:
+        status_msg = await edit_msg.edit_text(
+            "🔗 <b>Preparing single-file link...</b>\n⏳ This may take a few minutes\n\n❌ /cancel to abort",
+            parse_mode="HTML",
+        )
+    else:
+        status_msg = await bot.send_message(
+            chat_id,
+            "🔗 <b>Preparing single-file link...</b>\n⏳ This may take a few minutes\n\n❌ /cancel to abort",
+            parse_mode="HTML",
+        )
+
+    async def do_download():
+        return await download(url, platform, audio_only=False, quality="best")
+
+    task = asyncio.create_task(do_download())
+    set_active(user_id, task)
+
+    try:
+        result = await task
+    except asyncio.CancelledError:
+        await status_msg.edit_text("❌ Download cancelled.")
+        return
+    finally:
+        clear_active(user_id)
+
+    if not result.success:
+        error_text = result.error[:150] if result.error else "Unknown error"
+        await status_msg.edit_text(f"❌ Download failed:\n<code>{error_text}</code>", parse_mode="HTML")
+        return
+
+    try:
+        await _publish_direct_link_result(bot, status_msg, user_id, chat_id, url, platform, result)
+    except Exception as e:
+        cleanup_file(result.file_path or "")
+        await status_msg.edit_text(
+            f"❌ Failed to create direct link: <code>{str(e)[:150]}</code>",
+            parse_mode="HTML",
+        )
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message):

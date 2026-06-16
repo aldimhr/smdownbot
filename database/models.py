@@ -32,6 +32,18 @@ CREATE TABLE IF NOT EXISTS stats (
     total_users INTEGER DEFAULT 0,
     by_platform TEXT DEFAULT '{}'
 );
+
+CREATE TABLE IF NOT EXISTS direct_links (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    platform TEXT,
+    title TEXT,
+    file_path TEXT NOT NULL,
+    file_size INTEGER DEFAULT 0,
+    expires_at TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
 """
 
 async def init_db(db_path: str):
