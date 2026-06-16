@@ -124,9 +124,13 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
         else:
             opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
 
-    # TikTok: prefer no-watermark
+    # Platform-specific format overrides
     if platform == "tiktok":
         opts["format"] = "best"
+    elif platform == "facebook" and not audio_only:
+        # Prefer progressive Facebook formats to avoid huge DASH video+audio merges.
+        # For long reels/videos this is much smaller/faster than the default bestvideo+bestaudio path.
+        opts["format"] = "sd/hd/best"
 
     # Build command
     cmd = [YTDLP]

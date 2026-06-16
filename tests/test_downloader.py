@@ -110,6 +110,36 @@ class TestDownloaderTimeoutHandling:
         assert result is None
         assert proc.killed is True
 
+    def test_facebook_download_prefers_progressive_sd(self, monkeypatch, tmp_path):
+        captured = {}
+        out_file = tmp_path / "fb.mp4"
+        out_file.write_bytes(b"video")
+
+        class FakeProcess:
+            returncode = 0
+
+            async def communicate(self):
+                return f"{out_file}\n".encode(), b""
+
+            def kill(self):
+                pass
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            captured["args"] = args
+            return FakeProcess()
+
+        async def fake_get_info(url, platform=None, _retry=True):
+            return {"title": "Facebook Video", "duration": 10, "thumbnail": None}
+
+        monkeypatch.setattr(downloader.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+        monkeypatch.setattr(downloader.config, "DOWNLOAD_DIR", str(tmp_path))
+        monkeypatch.setattr(downloader, "get_info", fake_get_info)
+
+        result = asyncio.run(downloader.download("https://www.facebook.com/share/v/1EA8NFu4WJ/", "facebook"))
+
+        assert result.success is True
+        assert "sd/hd/best" in captured["args"]
+
     def test_download_timeout_returns_friendly_error(self, monkeypatch, tmp_path):
         class HangingProcess:
             returncode = 0
