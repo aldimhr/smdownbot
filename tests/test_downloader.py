@@ -84,6 +84,28 @@ class TestPlatformDetection:
 
 
 class TestDownloaderTimeoutHandling:
+    def test_download_timeout_helper_extends_long_facebook_videos(self, monkeypatch):
+        monkeypatch.setattr(downloader.config, "YT_DLP_TIMEOUT", 300)
+
+        timeout = downloader._download_timeout_for(
+            "facebook",
+            audio_only=False,
+            info={"duration": 9082},
+        )
+
+        assert timeout == 900
+
+    def test_download_timeout_helper_keeps_default_for_short_videos(self, monkeypatch):
+        monkeypatch.setattr(downloader.config, "YT_DLP_TIMEOUT", 300)
+
+        timeout = downloader._download_timeout_for(
+            "facebook",
+            audio_only=False,
+            info={"duration": 120},
+        )
+
+        assert timeout == 300
+
     def test_get_info_timeout_returns_none(self, monkeypatch):
         class HangingProcess:
             def __init__(self):
@@ -160,7 +182,11 @@ class TestDownloaderTimeoutHandling:
         async def fake_create_subprocess_exec(*args, **kwargs):
             return proc
 
+        async def fake_get_info(url, platform=None, _retry=True):
+            return None
+
         monkeypatch.setattr(downloader.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+        monkeypatch.setattr(downloader, "get_info", fake_get_info)
         monkeypatch.setattr(downloader.config, "DOWNLOAD_DIR", str(tmp_path))
         monkeypatch.setattr(downloader.config, "YT_DLP_TIMEOUT", 1)
 

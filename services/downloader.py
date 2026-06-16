@@ -57,6 +57,19 @@ def _is_auth_error(stderr: str) -> bool:
     return any(p.lower() in lower for p in auth_patterns)
 
 
+def _download_timeout_for(platform: str | None, *, audio_only: bool, info: Optional[dict] = None) -> int:
+    timeout = config.YT_DLP_TIMEOUT
+    if platform != "facebook" or audio_only or not info:
+        return timeout
+
+    duration = int(info.get("duration") or 0)
+    if duration >= 3600:
+        return max(timeout, 900)
+    if duration >= 1800:
+        return max(timeout, 600)
+    return timeout
+
+
 async def _communicate_with_timeout(proc: asyncio.subprocess.Process, timeout: int, *, context: str):
     try:
         return await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -108,6 +121,10 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
     """Download video/audio via yt-dlp."""
     os.makedirs(config.DOWNLOAD_DIR, exist_ok=True)
     opts = _base_opts(platform)
+    info: Optional[dict] = None
+
+    if platform == "facebook" and not audio_only:
+        info = await get_info(url, platform)
 
     if audio_only:
         opts.update({
@@ -156,16 +173,23 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
+    download_timeout = _download_timeout_for(platform, audio_only=audio_only, info=info)
+    logger.info(
+        "Using yt-dlp timeout=%ss for platform=%s audio_only=%s",
+        download_timeout,
+        platform or "unknown",
+        audio_only,
+    )
     try:
         stdout, stderr = await _communicate_with_timeout(
             proc,
-            config.YT_DLP_TIMEOUT,
+            download_timeout,
             context=f"download for {platform or 'unknown'}",
         )
     except asyncio.TimeoutError:
         return DownloadResult(
             success=False,
-            error=f"Download timed out after {config.YT_DLP_TIMEOUT // 60} minutes. Try a smaller/lower-quality file or another link.",
+            error=f"Download timed out after {download_timeout // 60} minutes. Try a smaller/lower-quality file or another link.",
         )
 
     if proc.returncode != 0:
@@ -204,13 +228,13 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
                     try:
                         stdout, stderr = await _communicate_with_timeout(
                             proc,
-                            config.YT_DLP_TIMEOUT,
+                            download_timeout,
                             context=f"download retry for {platform or 'unknown'}",
                         )
                     except asyncio.TimeoutError:
                         return DownloadResult(
                             success=False,
-                            error=f"Download timed out after {config.YT_DLP_TIMEOUT // 60} minutes. Try a smaller/lower-quality file or another link.",
+                            error=f"Download timed out after {download_timeout // 60} minutes. Try a smaller/lower-quality file or another link.",
                         )
                     if proc.returncode == 0:
                         filepath = stdout.decode().strip().split("\n")[-1]
@@ -236,7 +260,8 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
     file_size = os.path.getsize(filepath)
 
     # Get title from info
-    info = await get_info(url, platform)
+    if info is None:
+        info = await get_info(url, platform)
     title = info.get("title", "Download") if info else "Download"
     duration = info.get("duration") if info else None
     thumbnail = info.get("thumbnail") if info else None
