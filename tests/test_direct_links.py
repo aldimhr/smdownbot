@@ -1,4 +1,6 @@
 import asyncio
+import os
+import time
 from pathlib import Path
 
 from keyboards.inline import direct_link_keyboard
@@ -67,6 +69,70 @@ class TestDirectLinks:
         assert oct(Path(published.file_path).stat().st_mode & 0o777) == "0o644"
         assert not source.exists()
         assert published.url == "https://example.com/files/deadbeef.mp4"
+
+    def test_cleanup_direct_link_artifacts_removes_old_orphans_only(self, monkeypatch, tmp_path):
+        public_dir = tmp_path / "public"
+        public_dir.mkdir()
+        old_orphan = public_dir / "old-orphan.txt"
+        old_orphan.write_text("old")
+        active_file = public_dir / "active.txt"
+        active_file.write_text("active")
+        fresh_orphan = public_dir / "fresh.txt"
+        fresh_orphan.write_text("fresh")
+
+        old_ts = time.time() - (4 * 3600)
+        os.utime(old_orphan, (old_ts, old_ts))
+        os.utime(active_file, (old_ts, old_ts))
+
+        async def fake_cleanup(now_iso=None):
+            return 2
+
+        async def fake_list_active_paths():
+            return [str(active_file)]
+
+        monkeypatch.setattr(direct_links.config, "DIRECT_LINK_DIR", str(public_dir))
+        monkeypatch.setattr(direct_links.config, "DIRECT_LINK_TTL_HOURS", 3)
+        monkeypatch.setattr(direct_links, "cleanup_expired_direct_links", fake_cleanup)
+        monkeypatch.setattr(direct_links, "list_active_direct_link_paths", fake_list_active_paths)
+
+        result = asyncio.run(direct_links.cleanup_direct_link_artifacts())
+
+        assert result == {"removed_db": 2, "removed_orphans": 1, "removed_working": 0}
+        assert not old_orphan.exists()
+        assert active_file.exists()
+        assert fresh_orphan.exists()
+
+
+    def test_cleanup_direct_link_artifacts_removes_stale_working_downloads(self, monkeypatch, tmp_path):
+        public_dir = tmp_path / "public"
+        public_dir.mkdir()
+        download_dir = tmp_path / "downloads"
+        download_dir.mkdir()
+        stale_file = download_dir / "stale.mp4.part"
+        stale_file.write_text("stale")
+        fresh_file = download_dir / "fresh.mp4"
+        fresh_file.write_text("fresh")
+
+        old_ts = time.time() - (4 * 3600)
+        os.utime(stale_file, (old_ts, old_ts))
+
+        async def fake_cleanup(now_iso=None):
+            return 0
+
+        async def fake_list_active_paths():
+            return []
+
+        monkeypatch.setattr(direct_links.config, "DIRECT_LINK_DIR", str(public_dir))
+        monkeypatch.setattr(direct_links.config, "DOWNLOAD_DIR", str(download_dir))
+        monkeypatch.setattr(direct_links.config, "DIRECT_LINK_TTL_HOURS", 3)
+        monkeypatch.setattr(direct_links, "cleanup_expired_direct_links", fake_cleanup)
+        monkeypatch.setattr(direct_links, "list_active_direct_link_paths", fake_list_active_paths)
+
+        result = asyncio.run(direct_links.cleanup_direct_link_artifacts())
+
+        assert result == {"removed_db": 0, "removed_orphans": 0, "removed_working": 1}
+        assert not stale_file.exists()
+        assert fresh_file.exists()
 
 
 class TestDirectLinkKeyboard:

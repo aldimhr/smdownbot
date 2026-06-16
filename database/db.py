@@ -211,6 +211,15 @@ async def delete_direct_link(token: str):
         await db.close()
 
 
+async def list_active_direct_link_paths():
+    db = await get_db()
+    try:
+        rows = await db.execute_fetchall("SELECT file_path FROM direct_links")
+        return [row["file_path"] for row in rows if row["file_path"]]
+    finally:
+        await db.close()
+
+
 async def cleanup_expired_direct_links(now_iso: str | None = None):
     now_iso = now_iso or datetime.utcnow().isoformat()
     db = await get_db()

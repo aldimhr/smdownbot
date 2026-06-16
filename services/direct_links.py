@@ -2,10 +2,11 @@ import os
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import quote
 
 from config import config
-from database.db import create_direct_link, cleanup_expired_direct_links
+from database.db import create_direct_link, cleanup_expired_direct_links, list_active_direct_link_paths
 
 
 @dataclass
@@ -40,8 +41,47 @@ def build_direct_link_url(token: str, ext: str) -> str:
     return f"{base}/{quote(filename)}"
 
 
+def _expired_cutoff_timestamp() -> float:
+    return (datetime.now(timezone.utc) - timedelta(hours=config.DIRECT_LINK_TTL_HOURS)).timestamp()
+
+
+def _cleanup_stale_files(directory: Path, *, cutoff: float, keep_paths: set[Path] | None = None) -> int:
+    if not directory.exists():
+        return 0
+    keep_paths = keep_paths or set()
+    removed = 0
+    for path in directory.iterdir():
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if resolved in keep_paths:
+            continue
+        try:
+            if path.stat().st_mtime <= cutoff:
+                path.unlink()
+                removed += 1
+        except FileNotFoundError:
+            continue
+    return removed
+
+
+async def cleanup_direct_link_artifacts() -> dict[str, int]:
+    removed_db = await cleanup_expired_direct_links()
+    public_dir = Path(config.DIRECT_LINK_DIR)
+    active_paths = {Path(p).resolve() for p in await list_active_direct_link_paths() if p}
+    cutoff = _expired_cutoff_timestamp()
+    removed_orphans = _cleanup_stale_files(public_dir, cutoff=cutoff, keep_paths=active_paths)
+    removed_working = _cleanup_stale_files(Path(config.DOWNLOAD_DIR), cutoff=cutoff)
+
+    return {
+        "removed_db": removed_db,
+        "removed_orphans": removed_orphans,
+        "removed_working": removed_working,
+    }
+
+
 async def publish_direct_link(source_path: str, user_id: int, platform: str, title: str, file_size: int) -> PublishedDirectLink:
-    await cleanup_expired_direct_links()
+    await cleanup_direct_link_artifacts()
     os.makedirs(config.DIRECT_LINK_DIR, exist_ok=True)
 
     token = secrets.token_hex(16)

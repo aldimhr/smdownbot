@@ -10,7 +10,7 @@ from aiogram.enums import ParseMode
 
 from config import config
 from database.models import init_db
-from database.db import cleanup_expired_direct_links
+from services.direct_links import cleanup_direct_link_artifacts
 from handlers import start, download, admin, stars
 
 logging.basicConfig(
@@ -26,8 +26,8 @@ async def on_startup(bot: Bot):
     os.makedirs(config.DIRECT_LINK_DIR, exist_ok=True)
     os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
     await init_db(config.DB_PATH)
-    await cleanup_expired_direct_links()
-    logger.info("Bot started. DB initialized.")
+    cleanup_result = await cleanup_direct_link_artifacts()
+    logger.info("Bot started. DB initialized. Direct-link cleanup: %s", cleanup_result)
 
 async def main():
     bot = Bot(
