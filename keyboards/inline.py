@@ -32,15 +32,22 @@ def quality_keyboard(short_id: str, platform: str) -> InlineKeyboardMarkup:
 
 
 def direct_link_keyboard(short_id: str, is_admin: bool = False) -> InlineKeyboardMarkup:
-    label = (
-        "🔗 Generate single-file link"
-        if is_admin
-        else f"🔗 Single-file link ⭐{config.STARS_DIRECT_LINK}"
-    )
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=label, callback_data=f"lk:best:{short_id}")],
-        [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel")],
+    rows = []
+    if is_admin:
+        rows.append([
+            InlineKeyboardButton(text="🔗 Generate single-file link", callback_data=f"lk:best:{short_id}"),
+        ])
+        rows.append([
+            InlineKeyboardButton(text="📢 Upload to @stokdramacina", callback_data=f"ch:best:{short_id}"),
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton(text=f"🔗 Single-file link ⭐{config.STARS_DIRECT_LINK}", callback_data=f"lk:best:{short_id}"),
+        ])
+    rows.append([
+        InlineKeyboardButton(text="❌ Cancel", callback_data="cancel"),
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def cancel_keyboard() -> InlineKeyboardMarkup:

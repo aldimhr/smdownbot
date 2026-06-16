@@ -1,7 +1,7 @@
 import asyncio
 import os
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.types import Message, CallbackQuery, FSInputFile, ChatFullInfo
 from aiogram.filters import Command
 from database.db import can_download, record_download, use_extra_download
 from services.platform import detect_platform, get_platform_info
@@ -46,10 +46,58 @@ def direct_link_offer_text(title: str, duration: int | None, is_admin_request: b
         text += f"\n⏱ {format_duration(duration)}"
     text += f"\n\n🔗 You can receive this as <b>one downloadable file</b> via a temporary direct link."
     if is_admin_request:
-        text += "\n\n👑 Admin bypass is active for this request."
+        text += (
+            "\n\n👑 Admin bypass is active for this request."
+            f"\n📢 You can also upload it directly to <b>{config.ADMIN_UPLOAD_CHANNEL}</b>."
+        )
     else:
         text += f"\n\n⭐ Price: <b>{config.STARS_DIRECT_LINK} Stars</b>"
     return text
+
+
+def _public_channel_username(channel: str) -> str:
+    value = channel.strip()
+    if value.startswith("https://t.me/"):
+        value = value.removeprefix("https://t.me/")
+    elif value.startswith("http://t.me/"):
+        value = value.removeprefix("http://t.me/")
+    return value.lstrip("@/")
+
+
+def build_public_channel_post_url(channel_username: str, message_id: int) -> str:
+    return f"https://t.me/{_public_channel_username(channel_username)}/{message_id}"
+
+
+def channel_upload_caption(result: DownloadResult) -> str:
+    caption = f"🎬 <b>{result.title or 'Download'}</b>"
+    if result.duration:
+        caption += f"\n⏱ {format_duration(result.duration)}"
+    if result.file_size:
+        caption += f"\n💾 {format_size(result.file_size)}"
+    return caption
+
+
+async def _upload_media_to_channel(bot: Bot, result: DownloadResult, channel_chat_id: int | str):
+    file = FSInputFile(result.file_path or "")
+    caption = channel_upload_caption(result)
+    if result.file_path and result.file_path.lower().endswith((".m4a", ".mp3")):
+        return await bot.send_audio(
+            chat_id=channel_chat_id,
+            audio=file,
+            caption=caption,
+            parse_mode="HTML",
+        )
+    return await bot.send_video(
+        chat_id=channel_chat_id,
+        video=file,
+        caption=caption,
+        parse_mode="HTML",
+        supports_streaming=True,
+    )
+
+
+async def _resolve_admin_upload_channel(bot: Bot) -> ChatFullInfo:
+    return await bot.get_chat(config.ADMIN_UPLOAD_CHANNEL)
 
 
 async def _publish_direct_link_result(bot: Bot, status_msg, user_id: int, chat_id: int, url: str, platform: str, result: DownloadResult):
@@ -297,6 +345,26 @@ async def process_direct_link_callback(callback: CallbackQuery, bot: Bot):
     await callback.answer("Please complete the Stars payment to generate the single-file link.")
 
 
+@router.callback_query(F.data.startswith("ch:"))
+async def process_channel_upload_callback(callback: CallbackQuery, bot: Bot):
+    callback_data = callback.data or ""
+    parts = callback_data.split(":", 2)
+    if len(parts) < 3:
+        await callback.answer("Invalid request")
+        return
+
+    short_id = parts[2]
+    user_id = callback.from_user.id
+    chat_id = callback.message.chat.id if callback.message else user_id
+
+    if not is_admin_user(user_id):
+        await callback.answer("Admin only", show_alert=True)
+        return
+
+    await callback.answer()
+    await process_channel_upload(bot, user_id, short_id, chat_id, callback.message)
+
+
 async def process_quality_download(bot: Bot, user_id: int, quality: str, short_id: str, chat_id: int, edit_msg=None):
     """Download logic shared between regular and premium (Stars-paid) downloads."""
     audio_only = quality == "audio"
@@ -395,6 +463,80 @@ async def process_quality_download(bot: Bot, user_id: int, quality: str, short_i
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Upload failed: {str(e)[:100]}")
+    finally:
+        cleanup_file(result.file_path or "")
+
+
+async def process_channel_upload(bot: Bot, user_id: int, short_id: str, chat_id: int, edit_msg=None):
+    url_data = get_url(short_id)
+    if not url_data:
+        msg = "❌ Link expired. Please send the URL again."
+        if edit_msg:
+            await edit_msg.edit_text(msg)
+        else:
+            await bot.send_message(chat_id, msg)
+        return
+    url, platform = url_data
+
+    if edit_msg:
+        status_msg = await edit_msg.edit_text(
+            f"📢 <b>Uploading to {config.ADMIN_UPLOAD_CHANNEL}...</b>\n⏳ This may take a few minutes\n\n❌ /cancel to abort",
+            parse_mode="HTML",
+        )
+    else:
+        status_msg = await bot.send_message(
+            chat_id,
+            f"📢 <b>Uploading to {config.ADMIN_UPLOAD_CHANNEL}...</b>\n⏳ This may take a few minutes\n\n❌ /cancel to abort",
+            parse_mode="HTML",
+        )
+
+    async def do_download():
+        return await download(url, platform, audio_only=False, quality="best")
+
+    task = asyncio.create_task(do_download())
+    set_active(user_id, task)
+
+    try:
+        result = await task
+    except asyncio.CancelledError:
+        await status_msg.edit_text("❌ Upload cancelled.")
+        return
+    finally:
+        clear_active(user_id)
+
+    if not result.success:
+        error_text = result.error[:150] if result.error else "Unknown error"
+        await status_msg.edit_text(f"❌ Download failed:\n<code>{error_text}</code>", parse_mode="HTML")
+        return
+
+    if result.file_size and result.file_size > config.PREMIUM_FILE_SIZE:
+        cleanup_file(result.file_path or "")
+        await status_msg.edit_text(
+            f"❌ File is too large for Telegram channel upload ({format_size(result.file_size)}). Use the direct-link option instead.",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        channel_chat = await _resolve_admin_upload_channel(bot)
+        message = await _upload_media_to_channel(bot, result, channel_chat.id)
+        channel_ref = channel_chat.username or _public_channel_username(config.ADMIN_UPLOAD_CHANNEL)
+        post_url = build_public_channel_post_url(channel_ref, message.message_id)
+        await record_download(user_id, url, platform, result.title or "Download", result.file_size or 0)
+        await status_msg.edit_text(
+            (
+                f"✅ <b>Uploaded to channel</b>\n"
+                f"📢 <b>{getattr(channel_chat, 'title', channel_ref)}</b>\n"
+                f"🌐 {post_url}"
+            ),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except Exception as e:
+        await status_msg.edit_text(
+            f"❌ Channel upload failed: <code>{str(e)[:180]}</code>\n\nTry the direct-link option instead.",
+            parse_mode="HTML",
+        )
     finally:
         cleanup_file(result.file_path or "")
 

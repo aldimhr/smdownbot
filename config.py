@@ -23,6 +23,7 @@ class Config:
     DIRECT_LINK_DIR: str = os.getenv("DIRECT_LINK_DIR", "/var/www/html/smdownbot-links")
     DIRECT_LINK_URL_BASE: str = os.getenv("DIRECT_LINK_URL_BASE", "http://localhost")
     DIRECT_LINK_URL_PATH: str = os.getenv("DIRECT_LINK_URL_PATH", "/smdownbot-links")
+    ADMIN_UPLOAD_CHANNEL: str = os.getenv("ADMIN_UPLOAD_CHANNEL", "@stokdramacina")
     COOKIES_DIR: str = "cookies"
 
 config = Config()
