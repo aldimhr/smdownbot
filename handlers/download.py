@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery, FSInputFile, ChatFullInfo
 from aiogram.filters import Command
 from database.db import can_download, record_download, use_extra_download
 from services.platform import detect_platform, get_platform_info
-from services.downloader import download, get_info, cleanup_file, DownloadResult
+from services.downloader import download, get_info, cleanup_file, split_video, DownloadResult
 from services.direct_links import is_large_or_long, publish_direct_link
 from services.limiter import is_downloading, set_active, clear_active, cancel_download
 from keyboards.inline import quality_keyboard, cancel_keyboard, direct_link_keyboard
@@ -68,8 +68,10 @@ def build_public_channel_post_url(channel_username: str, message_id: int) -> str
     return f"https://t.me/{_public_channel_username(channel_username)}/{message_id}"
 
 
-def channel_upload_caption(result: DownloadResult) -> str:
+def channel_upload_caption(result: DownloadResult, *, part_index: int | None = None, total_parts: int | None = None) -> str:
     caption = f"🎬 <b>{result.title or 'Download'}</b>"
+    if part_index is not None and total_parts is not None and total_parts > 1:
+        caption += f"\n📦 Part {part_index}/{total_parts}"
     if result.duration:
         caption += f"\n⏱ {format_duration(result.duration)}"
     if result.file_size:
@@ -77,15 +79,37 @@ def channel_upload_caption(result: DownloadResult) -> str:
     return caption
 
 
-async def _upload_media_to_channel(bot: Bot, result: DownloadResult, channel_chat_id: int | str):
+def _channel_split_target_mb() -> int:
+    configured_mb = max(1, config.MAX_FILE_SIZE // (1024 * 1024))
+    return max(1, configured_mb - 5)
+
+
+def _build_channel_post_urls(channel_username: str, message_ids: list[int]) -> list[str]:
+    return [build_public_channel_post_url(channel_username, message_id) for message_id in message_ids]
+
+
+def _channel_request_timeout(file_size: int | None) -> int:
+    if not file_size:
+        return 300
+    return max(300, int(file_size / (1024 * 1024)) * 12)
+
+
+def _cleanup_paths(paths: list[str]):
+    for path in paths:
+        cleanup_file(path)
+
+
+async def _upload_media_to_channel(bot: Bot, result: DownloadResult, channel_chat_id: int | str, *, part_index: int | None = None, total_parts: int | None = None):
     file = FSInputFile(result.file_path or "")
-    caption = channel_upload_caption(result)
+    caption = channel_upload_caption(result, part_index=part_index, total_parts=total_parts)
+    request_timeout = _channel_request_timeout(result.file_size)
     if result.file_path and result.file_path.lower().endswith((".m4a", ".mp3")):
         return await bot.send_audio(
             chat_id=channel_chat_id,
             audio=file,
             caption=caption,
             parse_mode="HTML",
+            request_timeout=request_timeout,
         )
     return await bot.send_video(
         chat_id=channel_chat_id,
@@ -93,6 +117,7 @@ async def _upload_media_to_channel(bot: Bot, result: DownloadResult, channel_cha
         caption=caption,
         parse_mode="HTML",
         supports_streaming=True,
+        request_timeout=request_timeout,
     )
 
 
@@ -519,8 +544,58 @@ async def process_channel_upload(bot: Bot, user_id: int, short_id: str, chat_id:
 
     try:
         channel_chat = await _resolve_admin_upload_channel(bot)
-        message = await _upload_media_to_channel(bot, result, channel_chat.id)
         channel_ref = channel_chat.username or _public_channel_username(config.ADMIN_UPLOAD_CHANNEL)
+
+        if result.file_size and result.file_size > config.MAX_FILE_SIZE and result.file_path and result.file_path.lower().endswith('.mp4'):
+            parts = split_video(result.file_path, max_size_mb=_channel_split_target_mb())
+            uploaded_messages = []
+            total_parts = len(parts)
+            try:
+                for idx, part_path in enumerate(parts, start=1):
+                    part_result = DownloadResult(
+                        success=True,
+                        file_path=part_path,
+                        title=result.title,
+                        duration=result.duration,
+                        file_size=os.path.getsize(part_path),
+                        thumbnail=result.thumbnail,
+                        platform=result.platform,
+                    )
+                    uploaded_messages.append(
+                        await _upload_media_to_channel(
+                            bot,
+                            part_result,
+                            channel_chat.id,
+                            part_index=idx,
+                            total_parts=total_parts,
+                        )
+                    )
+                await record_download(user_id, url, platform, result.title or "Download", result.file_size or 0)
+                urls = _build_channel_post_urls(channel_ref, [msg.message_id for msg in uploaded_messages])
+                lines = "\n".join(f"• {post_url}" for post_url in urls)
+                await status_msg.edit_text(
+                    (
+                        f"✅ <b>Uploaded to channel in {total_parts} parts</b>\n"
+                        f"📢 <b>{getattr(channel_chat, 'title', channel_ref)}</b>\n"
+                        f"🌐 Posts:\n{lines}"
+                    ),
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            finally:
+                _cleanup_paths(parts)
+                cleanup_file(result.file_path or "")
+            return
+
+        if result.file_size and result.file_size > config.MAX_FILE_SIZE:
+            cleanup_file(result.file_path or "")
+            await status_msg.edit_text(
+                f"❌ File is too large for direct bot upload ({format_size(result.file_size)}). Use the direct-link option instead.",
+                parse_mode="HTML",
+            )
+            return
+
+        message = await _upload_media_to_channel(bot, result, channel_chat.id)
         post_url = build_public_channel_post_url(channel_ref, message.message_id)
         await record_download(user_id, url, platform, result.title or "Download", result.file_size or 0)
         await status_msg.edit_text(

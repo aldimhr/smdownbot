@@ -1,4 +1,7 @@
 from handlers.download import (
+    _build_channel_post_urls,
+    _channel_request_timeout,
+    _channel_split_target_mb,
     build_public_channel_post_url,
     channel_upload_caption,
     direct_link_offer_text,
@@ -26,6 +29,31 @@ class TestAdminChannelUploadHelpers:
         assert "Sample Video" in caption
         assert "2m 5s" in caption
         assert "12.0 MB" in caption
+
+    def test_channel_upload_caption_with_parts(self):
+        result = DownloadResult(
+            success=True,
+            file_path="/tmp/video.mp4",
+            title="Sample Video",
+            duration=125,
+            file_size=12 * 1024 * 1024,
+        )
+        caption = channel_upload_caption(result, part_index=2, total_parts=6)
+        assert "Part 2/6" in caption
+
+    def test_channel_split_target_mb_has_safety_margin(self, monkeypatch):
+        monkeypatch.setattr("handlers.download.config.MAX_FILE_SIZE", 50 * 1024 * 1024)
+        assert _channel_split_target_mb() == 45
+
+    def test_channel_request_timeout_scales_with_size(self):
+        assert _channel_request_timeout(None) == 300
+        assert _channel_request_timeout(45 * 1024 * 1024) >= 540
+
+    def test_build_channel_post_urls(self):
+        assert _build_channel_post_urls("@stokdramacina", [11, 12]) == [
+            "https://t.me/stokdramacina/11",
+            "https://t.me/stokdramacina/12",
+        ]
 
     def test_admin_offer_mentions_channel_upload(self, monkeypatch):
         monkeypatch.setattr("handlers.download.config.ADMIN_UPLOAD_CHANNEL", "@stokdramacina")
