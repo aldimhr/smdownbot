@@ -16,6 +16,7 @@ logger = logging.getLogger("smdownbot.downloader")
 YTDLP = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
 if not os.path.exists(YTDLP):
     YTDLP = shutil.which("yt-dlp") or "yt-dlp"
+CURL = shutil.which("curl") or "curl"
 
 @dataclass
 class DownloadResult:
@@ -117,6 +118,84 @@ async def get_info(url: str, platform: str = None, _retry: bool = True) -> Optio
     except json.JSONDecodeError:
         return None
 
+
+def _select_facebook_progressive_format(info: Optional[dict]) -> Optional[dict]:
+    if not info:
+        return None
+
+    formats = info.get("formats") or []
+    for preferred_id in ("sd", "hd"):
+        for fmt in formats:
+            if fmt.get("format_id") == preferred_id and fmt.get("url"):
+                return fmt
+    return None
+
+
+async def _download_facebook_progressive(info: dict, timeout: int) -> Optional[str]:
+    fmt = _select_facebook_progressive_format(info)
+    if not fmt:
+        return None
+
+    video_id = info.get("id") or "facebook"
+    ext = fmt.get("ext") or "mp4"
+    dest_path = os.path.join(config.DOWNLOAD_DIR, f"{video_id}.{ext}")
+    if os.path.exists(dest_path):
+        try:
+            os.remove(dest_path)
+        except OSError:
+            pass
+
+    cmd = [
+        CURL,
+        "-L",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--output",
+        dest_path,
+        "--connect-timeout",
+        "30",
+        "--retry",
+        "3",
+        "--retry-delay",
+        "2",
+        "--max-time",
+        str(timeout),
+    ]
+    for key, value in (fmt.get("http_headers") or {}).items():
+        cmd.extend(["-H", f"{key}: {value}"])
+    cmd.append(fmt["url"])
+
+    logger.info(
+        "Attempting direct Facebook progressive download via curl format=%s timeout=%ss",
+        fmt.get("format_id"),
+        timeout,
+    )
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        _, stderr = await _communicate_with_timeout(
+            proc,
+            timeout + 30,
+            context="facebook progressive curl download",
+        )
+    except asyncio.TimeoutError:
+        cleanup_file(dest_path)
+        raise
+
+    if proc.returncode != 0:
+        err = stderr.decode().strip().split("\n")[-1] if stderr else "curl download failed"
+        cleanup_file(dest_path)
+        logger.warning("Direct Facebook progressive download failed: %s", err)
+        return None
+    if not os.path.exists(dest_path):
+        return None
+    return dest_path
+
+
 async def download(url: str, platform: str = None, audio_only: bool = False, quality: str = "best") -> DownloadResult:
     """Download video/audio via yt-dlp."""
     os.makedirs(config.DOWNLOAD_DIR, exist_ok=True)
@@ -125,6 +204,27 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
 
     if platform == "facebook" and not audio_only:
         info = await get_info(url, platform)
+
+    download_timeout = _download_timeout_for(platform, audio_only=audio_only, info=info)
+    if platform == "facebook" and not audio_only and info:
+        try:
+            direct_path = await _download_facebook_progressive(info, download_timeout)
+        except asyncio.TimeoutError:
+            return DownloadResult(
+                success=False,
+                error=f"Download timed out after {download_timeout // 60} minutes. Try a smaller/lower-quality file or another link.",
+            )
+        if direct_path and os.path.exists(direct_path):
+            file_size = os.path.getsize(direct_path)
+            return DownloadResult(
+                success=True,
+                file_path=direct_path,
+                title=(info.get("title", "Download") if info else "Download")[:100],
+                duration=info.get("duration") if info else None,
+                file_size=file_size,
+                thumbnail=info.get("thumbnail") if info else None,
+                platform=platform,
+            )
 
     if audio_only:
         opts.update({
@@ -173,7 +273,6 @@ async def download(url: str, platform: str = None, audio_only: bool = False, qua
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    download_timeout = _download_timeout_for(platform, audio_only=audio_only, info=info)
     logger.info(
         "Using yt-dlp timeout=%ss for platform=%s audio_only=%s",
         download_timeout,

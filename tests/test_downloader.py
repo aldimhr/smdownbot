@@ -106,6 +106,62 @@ class TestDownloaderTimeoutHandling:
 
         assert timeout == 300
 
+    def test_select_facebook_progressive_format_prefers_sd(self):
+        fmt = downloader._select_facebook_progressive_format(
+            {
+                "formats": [
+                    {"format_id": "hd", "url": "https://example.com/hd.mp4"},
+                    {"format_id": "sd", "url": "https://example.com/sd.mp4"},
+                ]
+            }
+        )
+
+        assert fmt is not None
+        assert fmt["format_id"] == "sd"
+
+    def test_download_uses_direct_facebook_progressive_path(self, monkeypatch, tmp_path):
+        out_file = tmp_path / "fb.mp4"
+        captured = {"curl_called": False}
+
+        async def fake_get_info(url, platform=None, _retry=True):
+            return {
+                "id": "123",
+                "title": "Facebook Video",
+                "duration": 9082,
+                "thumbnail": "https://example.com/thumb.jpg",
+                "formats": [
+                    {
+                        "format_id": "sd",
+                        "url": "https://example.com/sd.mp4",
+                        "ext": "mp4",
+                        "http_headers": {"User-Agent": "facebookexternalhit/1.1"},
+                    }
+                ],
+            }
+
+        async def fake_download_progressive(info, timeout):
+            captured["curl_called"] = True
+            captured["timeout"] = timeout
+            out_file.write_bytes(b"video")
+            return str(out_file)
+
+        async def forbidden_create_subprocess_exec(*args, **kwargs):
+            raise AssertionError("yt-dlp subprocess should not be used when direct Facebook download succeeds")
+
+        monkeypatch.setattr(downloader, "get_info", fake_get_info)
+        monkeypatch.setattr(downloader, "_download_facebook_progressive", fake_download_progressive)
+        monkeypatch.setattr(downloader.asyncio, "create_subprocess_exec", forbidden_create_subprocess_exec)
+        monkeypatch.setattr(downloader.config, "DOWNLOAD_DIR", str(tmp_path))
+        monkeypatch.setattr(downloader.config, "YT_DLP_TIMEOUT", 300)
+
+        result = asyncio.run(downloader.download("https://www.facebook.com/share/v/1Hke63cs8r/", "facebook"))
+
+        assert captured["curl_called"] is True
+        assert captured["timeout"] == 900
+        assert result.success is True
+        assert result.file_path == str(out_file)
+        assert result.file_size == out_file.stat().st_size
+
     def test_get_info_timeout_returns_none(self, monkeypatch):
         class HangingProcess:
             def __init__(self):
